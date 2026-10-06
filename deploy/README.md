@@ -5,9 +5,9 @@ HTTPS certificate by itself. The game server listens on `127.0.0.1:8787` only, b
 
 1. Put your SSH public key into `cloud-init.yaml` (`__SSH_PUBLIC_KEY__`) and create the machine with it
    as user data. It installs Caddy, fail2ban and a pinned Bun (checked against its published checksum),
-   makes a `deploy` user for you and a locked-down `idlecrash` user for the service, and turns off
-   password and root logins.
-2. Open ports 22, 80 and 443 (tcp) and 443 (udp) in the provider's firewall.
+   makes a `deploy` user for you and a locked-down `idlecrash` user for the service, turns off
+   password and root logins, and turns on the machine's own firewall (`ufw`: only 22, 80 and 443 in).
+2. Open ports 22, 80 and 443 (tcp) and 443 (udp) in the provider's firewall too, so there are two.
 3. Pick a name that points at the machine. Without a domain, `203-0-113-7.sslip.io` resolves to
    `203.0.113.7`.
 4. From the repo root:
@@ -24,6 +24,12 @@ HTTPS certificate by itself. The game server listens on `127.0.0.1:8787` only, b
 6. Tell the mod to use it: `claude plugin configure idlecrash@grozoww-mods`, or set `serverUrl` in `/config`.
 
 Updating is the same command again. Accounts live in `/var/lib/idlecrash/accounts.json` and survive it.
+It also sets the `ufw` rules, so a machine made before the firewall was added gets it on the next run.
+After kernel updates the machine asks for a reboot (`ls /var/run/reboot-required`); `sudo reboot` is safe,
+both services start by themselves.
+
+The server counts a client by its IPv4 address, or by its `/64` for IPv6 (one user holds a whole `/64`),
+for the rate limit, the limit on new accounts and the limit on open sockets.
 
 ## Deploy on every push
 
@@ -49,4 +55,5 @@ gh variable set PUBLIC_URL --body https://203-0-113-7.sslip.io
 
 Compare the host key `ssh-keyscan` prints with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
 machine before you trust it. Changes under `deploy/` are not rolled out by the workflow, because they run
-with more rights: apply them with `deploy/deploy.sh`.
+with more rights: apply them with `deploy/deploy.sh`. The `ufw` rules are one of those changes: a machine that
+already exists gets them with one run of `deploy/deploy.sh`.

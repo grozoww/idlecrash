@@ -17,7 +17,7 @@ users:
     no_create_home: true
 package_update: true
 package_upgrade: true
-packages: [caddy, fail2ban, curl, unzip, rsync, unattended-upgrades]
+packages: [caddy, fail2ban, ufw, curl, unzip, rsync, unattended-upgrades]
 write_files:
   - path: /etc/ssh/sshd_config.d/99-idlecrash.conf
     content: |
@@ -37,5 +37,14 @@ runcmd:
     grep -E ' \*?(\./)?bun-linux-x64\.zip$' SHASUMS256.txt | sha256sum -c -
     unzip -o bun-linux-x64.zip
     install -m 0755 bun-linux-x64/bun /opt/bun/bin/bun
+  # The machine's own firewall, on top of the provider's. Same rules as in deploy.sh.
+  # `allow`, not `limit` for ssh: deploy.sh opens several connections in a row and `limit` would block it.
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw allow 443/udp
+  - ufw --force enable
   - systemctl restart ssh
   - systemctl enable --now fail2ban
