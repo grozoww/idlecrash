@@ -6,6 +6,8 @@ You send Claude a task. A pixel-art 1960s prop plane takes off. Everyone at your
 take-off and cashes out before the plane crashes. When Claude finishes, betting locks and you are
 back to work.
 
+<img src="docs/pane.png" alt="The game pane in the desktop app: the plane at 3.19x, the Cash out button, the stakes, the table with two bots and the last crashes" width="380">
+
 - **No real money.** Tokens are fake. They cannot be bought, sold or withdrawn.
 - **Only while Claude works.** Betting is open while any of your Claude Code sessions is working and
   locks when the last one stops. An open bet stays in its round: you can still cash out until the plane
@@ -142,6 +144,7 @@ says "Claude is working" every 2 seconds.
 bun test ./server ./shared       # engine, scene, end-to-end tests (they start a server on a spare port)
 cd mod && claude plugin validate . && claude plugin test .
 bun tools/preview-scene.ts       # draws the pixel art to /tmp/idlecrash-scene.png
+bun tools/preview-desk.ts        # draws the desktop pane to /tmp/idlecrash-pane.html (the file says how to make the PNG)
 bun tools/sync-shared.ts         # after editing shared/: copies it into the mod
 claude --plugin-dir "$PWD/mod"   # load the mod from this checkout
 ```
