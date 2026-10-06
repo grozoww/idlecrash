@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- When the app's browser panel cannot be used, `/idlecrash` now says why (no such tool in this session, the
+  call was refused, an error) instead of silently opening your default browser.
+
 ## 0.2.0
 
 - After Claude finishes you can watch the round to its end: the plane, the crash and the table stay on

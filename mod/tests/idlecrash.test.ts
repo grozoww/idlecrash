@@ -169,14 +169,16 @@ describe('the app\'s browser panel', () => {
     expect(appOpens).toHaveLength(1)
     expect(opened).toEqual([['open', LINK]])
     expect(out.text).toMatch(/your browser/)
+    expect(out.text).toMatch(/browser panel was not used: the call was refused \(not allowed\)/) // it says why
   })
 
   test('without the tool it goes straight to the default browser', async ($, on) => {
     const { opened, appOpens } = world(on)
     await $.session.start(START)
-    await run($)
+    const out = await run($)
     expect(appOpens).toHaveLength(0)
     expect(opened).toEqual([['open', LINK]])
+    expect(out.text).toMatch(/not used: this session has no browser-panel tool/)
   })
 
   test('"system" never touches the panel', { options: { browser: 'system' } }, async ($, on) => {

@@ -312,16 +312,17 @@ async function ensureAccount($: EngineInterface): Promise<boolean> {
   return true
 }
 
-/** Opens the address in the app's own browser panel, when this session has one. */
-async function openInApp($: EngineInterface, url: string): Promise<boolean> {
+/** Opens the address in the app's own browser panel. Null when it opened; else why it did not. */
+async function openInApp($: EngineInterface, url: string): Promise<string | null> {
   try {
     const tool = (await $.tool.list()).find(t => t.mcp && /Claude_Browser__preview_start$/.test(t.name))
-    if (!tool) return false
+    if (!tool) return 'this session has no browser-panel tool'
     // The same call the model would make, so the usual permission check applies.
     const res = (await $.tool.call({ tool: tool.name, url } as never)) as { deny?: string; isError?: boolean }
-    return res.deny === undefined && res.isError !== true
-  } catch {
-    return false
+    if (res.deny !== undefined) return `the call was refused (${String(res.deny).slice(0, 80)})`
+    return res.isError === true ? 'the panel reported an error' : null
+  } catch (err) {
+    return `error: ${(err instanceof Error ? err.message : String(err)).slice(0, 80)}`
   }
 }
 
@@ -331,22 +332,28 @@ async function openInApp($: EngineInterface, url: string): Promise<boolean> {
  * there is one, else to the default browser. Returns the address, whether something
  * opened it, and where.
  */
-async function openPage($: EngineInterface): Promise<{ url: string; isOpened: boolean; via: 'app' | 'system' | null } | null> {
+async function openPage(
+  $: EngineInterface,
+): Promise<{ url: string; isOpened: boolean; via: 'app' | 'system' | null; appWhy: string | null } | null> {
   const link = await api($, 'POST', '/link', {})
   const code = link.json?.code
   if (!link.json?.ok || typeof code !== 'string' || !/^[\w-]{6,40}$/.test(code)) return null
   const url = `${base}/?c=${code}`
-  if (browserMode !== 'system' && (await openInApp($, url))) return { url, isOpened: true, via: 'app' }
-  if (browserMode === 'app') return { url, isOpened: false, via: null }
+  let appWhy: string | null = null
+  if (browserMode !== 'system') {
+    appWhy = await openInApp($, url)
+    if (appWhy === null) return { url, isOpened: true, via: 'app', appWhy }
+  }
+  if (browserMode === 'app') return { url, isOpened: false, via: null, appWhy }
   for (const argv of [['open', url], ['xdg-open', url], ['cmd', '/c', 'start', '', url]]) {
     try {
       const run = await $.process.run(argv, { timeoutMs: 8000 })
-      if (run.exitCode === 0) return { url, isOpened: true, via: 'system' }
+      if (run.exitCode === 0) return { url, isOpened: true, via: 'system', appWhy }
     } catch {
       // That program is not here; try the next one.
     }
   }
-  return { url, isOpened: false, via: null }
+  return { url, isOpened: false, via: null, appWhy }
 }
 
 async function openInBrowser($: EngineInterface): Promise<string> {
@@ -354,8 +361,10 @@ async function openInBrowser($: EngineInterface): Promise<string> {
     if (!(await ensureAccount($))) return `IdleCrash: the server at ${base} did not accept the account.`
     const page = await openPage($)
     if (!page) return 'IdleCrash: the server gave no link.'
-    if (!page.isOpened) return `IdleCrash: could not open a browser. Open ${page.url}`
-    return `IdleCrash opened in ${page.via === 'app' ? "the app's browser panel" : 'your browser'}. Betting is open while Claude works.`
+    // Say why the panel was skipped, or a fallback to another browser looks like a bug.
+    const skipped = page.appWhy ? ` (The app's browser panel was not used: ${page.appWhy}.)` : ''
+    if (!page.isOpened) return `IdleCrash: could not open a browser${skipped} Open ${page.url}`
+    return `IdleCrash opened in ${page.via === 'app' ? "the app's browser panel" : 'your browser'}. Betting is open while Claude works.${skipped}`
   } catch {
     return `IdleCrash: cannot reach ${base}. Is the server running?`
   }
