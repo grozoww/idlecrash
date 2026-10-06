@@ -11,15 +11,31 @@ ExecStart=/opt/bun/bin/bun src/server.ts
 Restart=always
 RestartSec=2
 MemoryMax=600M
+UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+PrivateDevices=true
 ReadWritePaths=/var/lib/idlecrash
 ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
+SystemCallArchitectures=native
+# It listens on 8787, so it needs no capability at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Left out on purpose: MemoryDenyWriteExecute (Bun's JIT needs memory that is writable and executable), and
+# SystemCallFilter and RestrictAddressFamilies (not tried with Bun yet: add them one at a time and watch
+# `journalctl -u idlecrash` after each restart).
 
 [Install]
 WantedBy=multi-user.target
