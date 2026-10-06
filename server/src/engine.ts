@@ -120,7 +120,7 @@ export type Seat = {
   bet: Bet | null
   lastSeen: number
   showAt: number // bots: ms into the betting phase when their bet appears
-  /** Set when Claude stopped working: the player watches this round out, then leaves the table. */
+  /** Set when Claude stopped working: the player watches this round out (and can still cash out), then leaves the table. */
   watchedRound?: number
 }
 
@@ -251,9 +251,10 @@ export class Game {
 
   /**
    * A Claude Code session says whether it is working. Betting is open while any
-   * session of the account is. When the last one stops, an open bet is settled
-   * the way leaving does: cashed out if the plane is still flying, refunded if
-   * betting is still open.
+   * session of the account is. When the last one stops, new bets are locked, but
+   * an open bet stays in its round: the player watches the round out and can
+   * still cash out, or the auto cash-out takes it. If the plane crashes first,
+   * the stake is lost.
    */
   setWorking(
     accountId: string,
@@ -378,18 +379,18 @@ export class Game {
   }
 
   /**
-   * Claude stopped working. The open bet is settled now, as in `leave`, but the seat stays so the
-   * player can watch this round to its end. They cannot bet (`locked`), and the seat is dropped when
-   * the next round starts.
+   * Claude stopped working. The seat stays so the player can watch this round to its end, with the
+   * open bet in it: they can still cash out (`cashout` never needs Claude), but cannot bet (`locked`).
+   * Nothing is settled here, so nothing is refunded or cashed; the seat is dropped when the next
+   * round starts, and a bet that was not cashed out by the crash is lost.
    */
   private stopPlaying(accountId: string, now: number): { refunded: number; cashed: number } {
     const table = this.tableOf(accountId)
     const seat = table?.humans.get(accountId)
     if (!table || !seat) return { refunded: 0, cashed: 0 }
     this.advance(table, now)
-    const out = this.settleOpenBet(table, seat, now)
     seat.watchedRound = table.round
-    return out
+    return { refunded: 0, cashed: 0 }
   }
 
   private settleOpenBet(table: Table, seat: Seat, now: number): { refunded: number; cashed: number } {

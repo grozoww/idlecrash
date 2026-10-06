@@ -356,7 +356,7 @@ function renderLive(): void {
 
   const canBet = isWorking && !!snap && snap.table.phase === 'betting' && !snap.you.bet && snap.table.bettingEndsAt - now > 150
   el.bet.disabled = !canBet
-  el.cash.disabled = !(isWorking && !!mine && props.phase === 'running')
+  el.cash.disabled = !(!!mine && props.phase === 'running') // an open bet can be cashed out after Claude has stopped too
   setText(el.cash.firstChild!, mine && props.phase === 'running' ? `Cash out ${fmt(payoutFor(mine.amount, multiplier))}` : 'Cash out')
 }
 
@@ -380,7 +380,7 @@ function renderStatic(): void {
   }
   // Claude has stopped but the round is still going: watch it out, no betting.
   el.watch.hidden = !(isOnline && !isWorking && snap)
-  el.watch.textContent = summary || 'Claude finished: betting is locked. Watching this round.'
+  el.watch.textContent = (summary || 'Claude finished: betting is locked. Watching this round.') + (liveBet() ? ' Your bet is still in: cash out before the crash.' : '')
 
   const mine = snap?.you.bet ?? null
   el.bet.firstChild!.textContent = `Bet ${fmt(settings.stake)}`
