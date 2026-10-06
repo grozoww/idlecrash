@@ -46,6 +46,8 @@ export type Status = {
   isWorking: boolean
   /** Seated at a table on the server. */
   isJoined: boolean
+  /** Claude stopped, but the round is still on: the pane keeps showing it, without betting. */
+  isWatching: boolean
   error: string | null
   note: string | null
   /** The balance when this turn's play began, to show what the wait was worth. */

@@ -19,6 +19,7 @@ const el = {
   big: byId('big'),
   sub: byId('sub'),
   lock: byId('lock'),
+  watch: byId('watch'),
   bet: byId<HTMLButtonElement>('bet'),
   cash: byId<HTMLButtonElement>('cash'),
   stakes: byId('stakes'),
@@ -187,7 +188,8 @@ function onState(m: Record<string, any>): void {
   const wasWorking = isWorking
   isWorking = m.working === true
   balance = Number(m.balance) || 0
-  snap = isWorking ? parseSnapshot(m.snapshot) : null
+  // After Claude stops the server keeps the table on screen until the round is over.
+  snap = parseSnapshot(m.snapshot)
   if (isWorking && !wasWorking) {
     balanceAtStart = balance
     summary = ''
@@ -335,7 +337,7 @@ function renderLive(): void {
   paint(drawScene(input, W, H))
 
   const mine = liveBet()
-  if (!snap || !isWorking) {
+  if (!snap) {
     setText(el.big, '')
     setText(el.sub, '')
   } else if (props.phase === 'betting') {
@@ -364,18 +366,21 @@ function renderStatic(): void {
   el.pill.className = `pill ${isOnline && isWorking ? 'on' : 'warn'}`
   el.balance.textContent = isOnline ? fmt(balance) : '–'
   const delta = balanceAtStart === null ? 0 : balance - balanceAtStart
-  el.delta.textContent = isOnline && isWorking && balanceAtStart !== null ? `${sign(delta)} this turn` : ''
+  el.delta.textContent = isOnline && (isWorking || snap) && balanceAtStart !== null ? `${sign(delta)} this turn` : ''
   el.delta.className = delta >= 0 ? 'up' : 'down'
 
   if (!hasCreds) {
     showLock('Not linked yet', 'Open this page from Claude Code: type /idlecrash in the chat.')
   } else if (!isOnline) {
     showLock('Connecting…', 'Trying to reach the server.')
-  } else if (!isWorking) {
-    showLock(summary ? 'Claude finished' : 'Claude is idle', summary || 'Betting is open only while Claude works. Send it a task and come back.')
+  } else if (!isWorking && !snap) {
+    showLock(summary ? 'Betting is locked' : 'Claude is idle', summary || 'Betting is open only while Claude works. Send it a task and come back.')
   } else {
     el.lock.hidden = true
   }
+  // Claude has stopped but the round is still going: watch it out, no betting.
+  el.watch.hidden = !(isOnline && !isWorking && snap)
+  el.watch.textContent = summary || 'Claude finished: betting is locked. Watching this round.'
 
   const mine = snap?.you.bet ?? null
   el.bet.firstChild!.textContent = `Bet ${fmt(settings.stake)}`

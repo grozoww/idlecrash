@@ -143,6 +143,59 @@ describe('opening the page (no terminal: the desktop app)', () => {
   })
 })
 
+describe('the app\'s browser panel', () => {
+  test('is used when the session has one, and the system browser is left alone', async ($, on) => {
+    const { opened, appOpens } = world(on, { appBrowser: true })
+    await $.session.start(START)
+    const out = await run($)
+    expect(appOpens).toEqual([`mcp__Claude_Browser__preview_start ${LINK}`])
+    expect(opened).toHaveLength(0)
+    expect(out.text).toMatch(/app's browser panel/)
+  })
+
+  test('auto-opens there when Claude starts working in the desktop app', async ($, on) => {
+    const { clock, opened, appOpens } = world(on, { appBrowser: true })
+    await $.session.start(START)
+    await $.turn.start({ text: 'x', turnId: 't1' })
+    await clock.advance(6000)
+    expect(appOpens).toHaveLength(1)
+    expect(opened).toHaveLength(0)
+  })
+
+  test('if the panel refuses (permission, no such tool), the default browser takes over', async ($, on) => {
+    const { opened, appOpens } = world(on, { appBrowser: true, appBrowserFails: true })
+    await $.session.start(START)
+    const out = await run($)
+    expect(appOpens).toHaveLength(1)
+    expect(opened).toEqual([['open', LINK]])
+    expect(out.text).toMatch(/your browser/)
+  })
+
+  test('without the tool it goes straight to the default browser', async ($, on) => {
+    const { opened, appOpens } = world(on)
+    await $.session.start(START)
+    await run($)
+    expect(appOpens).toHaveLength(0)
+    expect(opened).toEqual([['open', LINK]])
+  })
+
+  test('"system" never touches the panel', { options: { browser: 'system' } }, async ($, on) => {
+    const { opened, appOpens } = world(on, { appBrowser: true })
+    await $.session.start(START)
+    await run($)
+    expect(appOpens).toHaveLength(0)
+    expect(opened).toEqual([['open', LINK]])
+  })
+
+  test('"app" never falls back: it shows the address instead', { options: { browser: 'app' } }, async ($, on) => {
+    const { opened } = world(on, { appBrowser: true, appBrowserFails: true })
+    await $.session.start(START)
+    const out = await run($)
+    expect(opened).toHaveLength(0)
+    expect(out.text).toContain(LINK)
+  })
+})
+
 describe('trouble', () => {
   test('an unreachable server never throws; the status line says so', async ($, on) => {
     const { clock, statuses } = world(on, { down: true })

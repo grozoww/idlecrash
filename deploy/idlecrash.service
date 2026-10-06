@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=idlecrash
 Group=idlecrash
-WorkingDirectory=/opt/idlecrash/server
+WorkingDirectory=/opt/idlecrash/repo/server
 Environment=PORT=8787 HOST=127.0.0.1 DATA_DIR=/var/lib/idlecrash TRUST_PROXY=1
 ExecStart=/opt/bun/bin/bun src/server.ts
 Restart=always

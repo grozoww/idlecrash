@@ -1,0 +1,35 @@
+#!/bin/bash
+# Installed on the server as /usr/local/bin/idlecrash-deploy. The CI key can run only this
+# (a forced command), and only as: deploy <40-hex commit>. It deploys a commit that is on main,
+# and goes back to the previous one if the server does not come up.
+set -euo pipefail
+cmd=${SSH_ORIGINAL_COMMAND:-}
+if [[ ! "$cmd" =~ ^deploy\ ([0-9a-f]{40})$ ]]; then
+  echo "refused: expected 'deploy <40-hex commit>'" >&2
+  exit 2
+fi
+sha=${BASH_REMATCH[1]}
+
+cd /opt/idlecrash/repo
+git fetch --quiet origin main
+if ! git merge-base --is-ancestor "$sha" origin/main; then
+  echo "refused: $sha is not on main" >&2
+  exit 3
+fi
+
+previous=$(git rev-parse HEAD)
+git checkout --quiet --detach "$sha"
+sudo -n /usr/bin/systemctl restart idlecrash
+
+for _ in $(seq 1 20); do
+  if curl -fsS --max-time 2 http://127.0.0.1:8787/health >/dev/null 2>&1; then
+    echo "deployed $sha (was $previous)"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "the server did not come up with $sha; going back to $previous" >&2
+git checkout --quiet --detach "$previous"
+sudo -n /usr/bin/systemctl restart idlecrash
+exit 1

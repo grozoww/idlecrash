@@ -11,6 +11,8 @@ export type Opts = {
   exitCode?: number
   surfaces?: string[]
   isPlaced?: boolean
+  appBrowser?: boolean // the session has the app's browser panel tool
+  appBrowserFails?: boolean
 }
 
 export type Call = { method: string; path: string; body: any; auth: string | null }
@@ -28,6 +30,8 @@ export function world(on: On, opts: Opts = {}) {
     accounts: 0,
     code: 'abcDEF123xyz',
     refuse: null as string | null, // make /bet and /cashout answer with this error code
+    seatKept: false, // after "Claude finished" the server keeps the seat until the round is over
+    roundOver: false,
     round: 1,
     phase: 'betting' as 'betting' | 'running' | 'crashed',
     phaseStart: clock.now(),
@@ -78,6 +82,7 @@ export function world(on: On, opts: Opts = {}) {
         return answer({ ok: true, creds: { id: 'acct1', secret: 'secret1' }, name: 'Guest1234', balance: state.balance })
       case 'POST /presence': {
         const locked = body.working === false ? { cashed: 120, refunded: 0 } : undefined
+        if (body.working === false) state.seatKept = true
         return answer({ ok: true, pageOpen: state.pageOpen, name: 'Guest1234', balance: state.balance, locked })
       }
       case 'POST /link':
@@ -87,6 +92,7 @@ export function world(on: On, opts: Opts = {}) {
       case 'POST /join':
         return answer({ ok: true, creds: { id: 'acct1', secret: 'secret1' }, snapshot: snapshot() })
       case 'GET /state':
+        if (state.seatKept && state.roundOver) return answer({ ok: false, error: 'not-seated' }, 409)
         return answer({ ok: true, snapshot: snapshot() })
       case 'POST /bet': {
         if (state.refuse) return answer({ ok: false, error: state.refuse }, 409)
@@ -114,6 +120,7 @@ export function world(on: On, opts: Opts = {}) {
   const statuses: (string | undefined)[] = []
   const toasts: string[] = []
   const paneOpens: unknown[] = []
+  const appOpens: string[] = []
   on('http.fetch', handle as never)
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
@@ -134,6 +141,16 @@ export function world(on: On, opts: Opts = {}) {
     opened.push([...(e as { argv: string[] }).argv])
     return { value: { exitCode: opts.exitCode ?? 0, stdout: '', stderr: '' } } as never
   })
+  on('tool.list', () => ({
+    value: opts.appBrowser
+      ? [{ name: 'mcp__Claude_Browser__preview_start', description: 'Open the browser pane', mcp: true }]
+      : [],
+  }) as never)
+  on('tool.call', (_$, e) => {
+    const call = e as unknown as { tool: string; url?: string }
+    appOpens.push(`${call.tool} ${call.url ?? ''}`.trim())
+    return (opts.appBrowserFails ? { deny: 'not allowed' } : { result: {}, text: 'Browser pane opened.' }) as never
+  })
   on('ui.status', (_$, e) => {
     statuses.push((e as { text?: string }).text)
     return { value: undefined } as never
@@ -143,7 +160,7 @@ export function world(on: On, opts: Opts = {}) {
     return { value: undefined } as never
   })
 
-  return { clock, calls, state, opened, statuses, toasts, paneOpens }
+  return { clock, calls, state, opened, statuses, toasts, paneOpens, appOpens }
 }
 
 export const START = { cwd: '/tmp', surface: 'terminal', isInteractive: true } as const

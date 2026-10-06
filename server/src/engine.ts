@@ -120,6 +120,8 @@ export type Seat = {
   bet: Bet | null
   lastSeen: number
   showAt: number // bots: ms into the betting phase when their bet appears
+  /** Set when Claude stopped working: the player watches this round out, then leaves the table. */
+  watchedRound?: number
 }
 
 export type Table = {
@@ -263,12 +265,14 @@ export class Game {
     if (working) {
       if (!sessions) this.workingUntil.set(accountId, (sessions = new Map()))
       sessions.set(sessionId, now + this.cfg.presenceMs)
+      const seat = this.seatFor(accountId)
+      if (seat) seat.watchedRound = undefined // Claude is back: stay at the table
       return null
     }
     sessions?.delete(sessionId)
     if (this.isWorking(accountId, now)) return null
     this.workingUntil.delete(accountId)
-    return this.leave(accountId, now)
+    return this.stopPlaying(accountId, now)
   }
 
   isWorking(accountId: string, now: number): boolean {
@@ -335,6 +339,8 @@ export class Game {
   join(account: Account, now: number): Table {
     const existing = this.tableOf(account.id)
     if (existing) {
+      const mine = existing.humans.get(account.id)
+      if (mine) mine.watchedRound = undefined
       this.touch(account, now)
       return existing
     }
@@ -362,22 +368,41 @@ export class Game {
   leave(accountId: string, now: number): { refunded: number; cashed: number } {
     const table = this.tableOf(accountId)
     const seat = table?.humans.get(accountId)
-    const out = { refunded: 0, cashed: 0 }
-    if (!table || !seat) return out
+    if (!table || !seat) return { refunded: 0, cashed: 0 }
     this.advance(table, now)
-    if (seat.bet && seat.bet.cash === null) {
-      if (table.phase === 'betting') {
-        this.credit(accountId, seat.bet.amount)
-        out.refunded = seat.bet.amount
-        seat.bet = null
-      } else if (table.phase === 'running') {
-        const cashed = this.cashOut(table, seat, now)
-        if (cashed.ok) out.cashed = cashed.payout
-      }
-    }
+    const out = this.settleOpenBet(table, seat, now)
     table.humans.delete(accountId)
     this.seatOf.delete(accountId)
     this.trimBots(table)
+    return out
+  }
+
+  /**
+   * Claude stopped working. The open bet is settled now, as in `leave`, but the seat stays so the
+   * player can watch this round to its end. They cannot bet (`locked`), and the seat is dropped when
+   * the next round starts.
+   */
+  private stopPlaying(accountId: string, now: number): { refunded: number; cashed: number } {
+    const table = this.tableOf(accountId)
+    const seat = table?.humans.get(accountId)
+    if (!table || !seat) return { refunded: 0, cashed: 0 }
+    this.advance(table, now)
+    const out = this.settleOpenBet(table, seat, now)
+    seat.watchedRound = table.round
+    return out
+  }
+
+  private settleOpenBet(table: Table, seat: Seat, now: number): { refunded: number; cashed: number } {
+    const out = { refunded: 0, cashed: 0 }
+    if (!seat.bet || seat.bet.cash !== null) return out
+    if (table.phase === 'betting') {
+      this.credit(seat.id, seat.bet.amount)
+      out.refunded = seat.bet.amount
+      seat.bet = null
+    } else if (table.phase === 'running') {
+      const cashed = this.cashOut(table, seat, now)
+      if (cashed.ok) out.cashed = cashed.payout
+    }
     return out
   }
 
@@ -387,9 +412,11 @@ export class Game {
     const table = this.tableOf(accountId)
     const seat = table?.humans.get(accountId)
     const account = this.accounts.get(accountId)
-    if (!table || !seat || !account) return { ok: false, error: 'not-seated' }
-    this.advance(table, now)
+    if (!account) return { ok: false, error: 'not-seated' }
+    // "Claude is not working" is the answer a player can act on, so it comes before "no seat".
     if (!this.isWorking(accountId, now)) return { ok: false, error: 'locked' }
+    if (!table || !seat) return { ok: false, error: 'not-seated' }
+    this.advance(table, now)
     if (table.phase !== 'betting') return { ok: false, error: 'closed' }
     if (seat.bet) return { ok: false, error: 'already-bet' }
     if (!Number.isInteger(amount) || (amount as number) < this.cfg.minBet || (amount as number) > this.cfg.maxBet) {
@@ -444,7 +471,7 @@ export class Game {
       for (const [session, until] of sessions) if (until <= now) sessions.delete(session)
       if (sessions.size === 0) {
         this.workingUntil.delete(id)
-        this.leave(id, now)
+        this.stopPlaying(id, now)
       }
     }
     for (const [code, link] of this.links) if (link.until <= now) this.links.delete(code)
@@ -601,6 +628,11 @@ export class Game {
   }
 
   private startBetting(table: Table, now: number): void {
+    for (const seat of [...table.humans.values()]) {
+      if (seat.watchedRound === undefined) continue
+      table.humans.delete(seat.id)
+      this.seatOf.delete(seat.id)
+    }
     table.phase = 'betting'
     table.round += 1
     table.phaseStart = now

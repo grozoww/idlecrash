@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- After Claude finishes you can watch the round to its end: the plane, the crash and the table stay on
+  screen, betting is locked, and an open bet is still cashed out for you at that moment.
+- In the desktop app the game opens in the app's own browser panel, not in an outside browser
+  (setting `browser`: `auto`, `app` or `system`).
+- A refusal now says why ("Claude is not working, betting is locked"), and a code with no words is shown as it is.
+- The server deploys itself when `main` changes (GitHub Actions, with a key that can only deploy a commit from `main`).
+
 ## 0.1.0
 
 First release.

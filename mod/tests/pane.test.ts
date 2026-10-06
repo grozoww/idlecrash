@@ -46,6 +46,49 @@ describe('a turn on a terminal', () => {
     expect(await ui.find({ key: 'cash' })).toBeUndefined()
   })
 
+  test('after the turn the round stays on screen to its end, without betting, then the summary comes', async ($, on) => {
+    const { clock, calls, state } = world(on, { surfaces: ['terminal'] })
+    await $.session.start(START)
+    await $.turn.start({ text: 'x', turnId: 't1' })
+    await clock.advance(1500)
+    const ui = await mount($)
+    state.phase = 'running'
+    state.phaseStart = clock.now() - 8000 - 2000
+    await clock.advance(1100)
+
+    await $.turn.complete(DONE)
+    await clock.advance(1500)
+    const afterFinish = calls.length
+    expect(await ui.find({ type: 'Text', text: /Watching this round/ })).toBeDefined()
+    expect(await ui.find({ key: 'bet' })).toBeUndefined()
+    expect(await ui.find({ key: 'cash' })).toBeUndefined()
+    expect(await ui.find({ key: 'auto' })).toBeUndefined() // nothing to set: it cannot bet
+    expect(await ui.find({ type: 'Text', text: /CRASHED|BETS OPEN|▲/, in: 'scene' })).toBeDefined() // the picture is still there
+    await clock.advance(3000)
+    expect(paths(calls.slice(afterFinish))).toContain('GET /state') // still asking the server about the round
+    expect(calls.slice(afterFinish).some(c => c.path === '/presence')).toBe(false) // but no longer beating
+
+    state.roundOver = true // the server took the seat away
+    await clock.advance(3000)
+    expect(await ui.find({ type: 'Text', text: /betting is locked/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Watching this round/ })).toBeUndefined()
+    const done = calls.length
+    await clock.advance(10_000)
+    expect(calls.length).toBe(done) // all quiet
+  })
+
+  test('a round that never ends is not watched for ever', async ($, on) => {
+    const { clock, calls } = world(on, { surfaces: ['terminal'] })
+    await $.session.start(START)
+    await $.turn.start({ text: 'x', turnId: 't1' })
+    await clock.advance(1500)
+    await $.turn.complete(DONE)
+    await clock.advance(125_000)
+    const done = calls.length
+    await clock.advance(10_000)
+    expect(calls.length).toBe(done)
+  })
+
   test('stops polling and beating once the turn is over', async ($, on) => {
     const { clock, calls } = world(on, { surfaces: ['terminal'] })
     await $.session.start(START)
@@ -53,9 +96,11 @@ describe('a turn on a terminal', () => {
     await clock.advance(1500)
     await $.turn.complete(DONE)
     await clock.advance(50)
-    const seen = calls.length
+    expect(calls.filter(c => c.path === '/presence' && c.body.working === true).length).toBeGreaterThan(0)
+    const beats = () => calls.filter(c => c.path === '/presence' && c.body.working === true).length
+    const before = beats()
     await clock.advance(10_000)
-    expect(calls.length).toBe(seen)
+    expect(beats()).toBe(before) // no more "Claude is working"
   })
 
   test('a subagent finishing does not end the game', async ($, on) => {

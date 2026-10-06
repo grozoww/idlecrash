@@ -15,7 +15,7 @@ const feed = atom({ plugin: 'idlecrash', key: 'feed' } as const, { snap: null, o
 const local = atom({ plugin: 'idlecrash', key: 'local' } as const, { stake: 50, auto: 2, isRebet: false } as Local)
 const status = atom(
   { plugin: 'idlecrash', key: 'status' } as const,
-  { isWorking: false, isJoined: false, error: null, note: null, balanceAtStart: null, summary: null } as Status,
+  { isWorking: false, isJoined: false, isWatching: false, error: null, note: null, balanceAtStart: null, summary: null } as Status,
 )
 
 const ERRORS: Record<string, string> = {
@@ -41,6 +41,7 @@ let base = DEFAULT_BASE
 let isBaseValid = true
 let nickOption = ''
 let isAutoOpenOption = true
+let browserMode: 'auto' | 'app' | 'system' = 'auto'
 let timer: { cancel: () => void } | null = null
 let creds: { id: string; secret: string } | null = null
 let isBusy = false
@@ -60,6 +61,7 @@ let isPaneUnplaced = false // the pane is open but the window is too narrow to s
 let beatFailures = 0
 let lastAutoOpen = -Infinity
 let startBalance: number | null = null
+let watchUntil = 0 // the pane stops watching a round that has not ended by then
 let lastBalance: number | null = null
 let lastSignature = ''
 const samples: { rtt: number; offset: number }[] = []
@@ -243,19 +245,28 @@ async function cashOut($: EngineInterface): Promise<void> {
 
 // ---- the turn ------------------------------------------------------------
 
+/** The pane stops watching: back to the summary. */
+async function endWatching($: EngineInterface): Promise<void> {
+  timer?.cancel()
+  timer = null
+  await update($, status, s => ({ ...s, isWatching: false, isJoined: false }))
+}
+
 async function tick($: EngineInterface): Promise<void> {
   if (isBusy) return
   isBusy = true
   try {
     const st = await read($, status)
-    if (!st.isWorking) return
+    if (!st.isWorking && !st.isWatching) return
     const pane = (await $.ui.panes()).find(p => p.id === PANE)
     isPaneUnplaced = !!pane && !pane.isPlaced
     if (!pane || !pane.isPlaced) {
-      if (st.isJoined) await leave($)
+      if (st.isWatching) await endWatching($)
+      else if (st.isJoined) await leave($)
       return
     }
     const now = await $.clock.now()
+    if (st.isWatching && (now > watchUntil || !st.isJoined)) return void (await endWatching($))
     if (!st.isJoined) {
       if (now - lastJoinTry > 3000) await join($)
       return
@@ -267,7 +278,9 @@ async function tick($: EngineInterface): Promise<void> {
       const reply = await api($, 'GET', '/state', undefined, true)
       if (reply.status === 409 || reply.status === 401) {
         if (reply.status === 401) creds = null
-        await update($, status, s => ({ ...s, isJoined: false }))
+        // A watcher's round is over: the server took the seat away.
+        if (st.isWatching) await endWatching($)
+        else await update($, status, s => ({ ...s, isJoined: false }))
         return
       }
       if (!(await apply($, reply))) throw new Error('bad reply')
@@ -299,25 +312,41 @@ async function ensureAccount($: EngineInterface): Promise<boolean> {
   return true
 }
 
+/** Opens the address in the app's own browser panel, when this session has one. */
+async function openInApp($: EngineInterface, url: string): Promise<boolean> {
+  try {
+    const tool = (await $.tool.list()).find(t => t.mcp && /Claude_Browser__preview_start$/.test(t.name))
+    if (!tool) return false
+    // The same call the model would make, so the usual permission check applies.
+    const res = (await $.tool.call({ tool: tool.name, url } as never)) as { deny?: string; isError?: boolean }
+    return res.deny === undefined && res.isError !== true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Opens the game page with a one-time code in the address, so the browser gets a key of
- * its own and never sees this plugin's secret. Returns the address, and whether a program
- * opened it.
+ * its own and never sees this plugin's secret. It goes to the app's browser panel when
+ * there is one, else to the default browser. Returns the address, whether something
+ * opened it, and where.
  */
-async function openPage($: EngineInterface): Promise<{ url: string; isOpened: boolean } | null> {
+async function openPage($: EngineInterface): Promise<{ url: string; isOpened: boolean; via: 'app' | 'system' | null } | null> {
   const link = await api($, 'POST', '/link', {})
   const code = link.json?.code
   if (!link.json?.ok || typeof code !== 'string' || !/^[\w-]{6,40}$/.test(code)) return null
   const url = `${base}/?c=${code}`
+  if (browserMode !== 'system' && (await openInApp($, url))) return { url, isOpened: true, via: 'app' }
+  if (browserMode === 'app') return { url, isOpened: false, via: null }
   for (const argv of [['open', url], ['xdg-open', url], ['cmd', '/c', 'start', '', url]]) {
     try {
       const run = await $.process.run(argv, { timeoutMs: 8000 })
-      if (run.exitCode === 0) return { url, isOpened: true }
+      if (run.exitCode === 0) return { url, isOpened: true, via: 'system' }
     } catch {
       // That program is not here; try the next one.
     }
   }
-  return { url, isOpened: false }
+  return { url, isOpened: false, via: null }
 }
 
 async function openInBrowser($: EngineInterface): Promise<string> {
@@ -325,9 +354,8 @@ async function openInBrowser($: EngineInterface): Promise<string> {
     if (!(await ensureAccount($))) return `IdleCrash: the server at ${base} did not accept the account.`
     const page = await openPage($)
     if (!page) return 'IdleCrash: the server gave no link.'
-    return page.isOpened
-      ? 'IdleCrash opened in your browser. Betting is open while Claude works.'
-      : `IdleCrash: could not start a browser. Open ${page.url}`
+    if (!page.isOpened) return `IdleCrash: could not open a browser. Open ${page.url}`
+    return `IdleCrash opened in ${page.via === 'app' ? "the app's browser panel" : 'your browser'}. Betting is open while Claude works.`
   } catch {
     return `IdleCrash: cannot reach ${base}. Is the server running?`
   }
@@ -395,6 +423,7 @@ async function begin($: EngineInterface): Promise<void> {
   await update($, status, () => ({
     isWorking: true,
     isJoined: false,
+    isWatching: false,
     error: null,
     note: null,
     balanceAtStart: null,
@@ -433,9 +462,11 @@ async function begin($: EngineInterface): Promise<void> {
 async function finish($: EngineInterface): Promise<void> {
   beatTimer?.cancel()
   beatTimer = null
-  timer?.cancel()
-  timer = null
-  if (!isWorking) return
+  if (!isWorking) {
+    timer?.cancel()
+    timer = null
+    return
+  }
   isWorking = false
   // Stopping the heartbeat settles an open bet on the server: cashed out, or refunded.
   let text = 'Claude finished, betting is locked.'
@@ -454,7 +485,15 @@ async function finish($: EngineInterface): Promise<void> {
   } catch {
     // The server did not answer: it locks by itself when the beats stop.
   }
-  await update($, status, s => ({ ...s, isWorking: false, isJoined: false, summary: text, note: null }))
+  // On a terminal the pane stays and keeps showing this round to its end; the server holds the seat for it.
+  const wasSeated = (await read($, status)).isJoined
+  const isWatching = hasTerminal && wasSeated
+  if (isWatching) watchUntil = (await $.clock.now()) + 120_000
+  else {
+    timer?.cancel()
+    timer = null
+  }
+  await update($, status, s => ({ ...s, isWorking: false, isWatching, isJoined: isWatching, summary: text, note: null }))
   $.ui.toast(text, { timeoutMs: 6000 })
   if (!hasTerminal) {
     $.ui.status(`IdleCrash: ${text}`)
@@ -470,6 +509,7 @@ export const register: Register = (on, options) => {
   base = clean ?? DEFAULT_BASE
   nickOption = String(options.nickname ?? '')
   isAutoOpenOption = options.autoOpen !== false
+  browserMode = options.browser === 'app' || options.browser === 'system' ? options.browser : 'auto'
 
   // ---- hooks ----------------------------------------------------------------
 
@@ -483,6 +523,7 @@ export const register: Register = (on, options) => {
     await update($, status, () => ({
       isWorking: false,
       isJoined: false,
+      isWatching: false,
       error: null,
       note: null,
       balanceAtStart: null,
@@ -557,7 +598,7 @@ export const register: Register = (on, options) => {
           text: [
             'IdleCrash: bet fake tokens while Claude works.',
             '/idlecrash          open the game (in the pane on a terminal, in the browser elsewhere)',
-            '/idlecrash web      open it in the browser',
+            '/idlecrash web      open it in a browser (the app\'s panel when there is one)',
             '/idlecrash link     print the browser address instead',
             '/idlecrash on|off  open it by itself when Claude starts working, or not',
             '/idlecrash name <nick>   /idlecrash top',
@@ -616,7 +657,7 @@ export const register: Register = (on, options) => {
       )
     }
 
-    if (!st.isWorking && st.summary) {
+    if (!st.isWorking && !st.isWatching && st.summary) {
       return (
         <Box flexDirection="column">
           {title}
@@ -626,7 +667,7 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
-    if (!st.isWorking) {
+    if (!st.isWorking && !st.isWatching) {
       return (
         <Box flexDirection="column">
           {title}
@@ -699,7 +740,9 @@ export const register: Register = (on, options) => {
     const room = Math.max(3, Math.floor((width - 6) / 6))
 
     let action
-    if (phase === 'betting' && !mine) {
+    if (!st.isWorking) {
+      action = <Text color="warning">Claude finished: betting is locked. Watching this round.</Text>
+    } else if (phase === 'betting' && !mine) {
       action = <Button key="bet" label={`b · Bet ${fmt(wish.stake)}`} hotkey="b" variant="primary" onPress={() => placeBet($)} />
     } else if (isLive && phase === 'running') {
       action = <Button key="cash" label="c · CASH OUT" hotkey="c" variant="primary" onPress={() => cashOut($)} />
@@ -729,8 +772,8 @@ export const register: Register = (on, options) => {
         </Box>
         <Box>{action}</Box>
         <Box>
-          <Text dimColor>stake </Text>
-          {STAKES.map((s, i) => (
+          <Text dimColor>{st.isWorking ? 'stake ' : ' '}</Text>
+          {(st.isWorking ? STAKES : []).map((s, i) => (
             <Button
               key={`stake${i + 1}`}
               plain
@@ -742,7 +785,7 @@ export const register: Register = (on, options) => {
           ))}
         </Box>
         <Box>
-          <Button
+          {st.isWorking && (<Button
             key="auto"
             plain
             hotkey="x"
@@ -750,18 +793,18 @@ export const register: Register = (on, options) => {
             onPress={() =>
               update($, local, w => ({ ...w, auto: AUTOS[(AUTOS.indexOf(w.auto) + 1) % AUTOS.length] ?? null }))
             }
-          />
-          <Text>  </Text>
-          <Button
+          />)}
+          <Text>{st.isWorking ? '  ' : ' '}</Text>
+          {st.isWorking && (<Button
             key="rebet"
             plain
             hotkey="r"
             label={`rebet ${wish.isRebet ? 'on' : 'off'}`}
             onPress={() => update($, local, w => ({ ...w, isRebet: !w.isRebet }))}
-          />
+          />)}
         </Box>
-        <Text color={st.error ? 'error' : 'warning'}>{st.error ?? st.note ?? ' '}</Text>
-        <Text dimColor>Claude is working. Bets lock when it finishes.</Text>
+        <Text color={st.error ? 'error' : 'warning'}>{st.error ?? st.note ?? (st.isWorking ? ' ' : (st.summary ?? ' '))}</Text>
+        <Text dimColor>{st.isWorking ? 'Claude is working. Bets lock when it finishes.' : ' '}</Text>
       </Box>
     )
   })

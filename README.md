@@ -10,11 +10,12 @@ back to work.
 
 - **No real money.** Tokens are fake. They cannot be bought, sold or withdrawn.
 - **Only while Claude works.** Betting is open while any of your Claude Code sessions is working and
-  locks when the last one stops. An open bet is cashed out for you at that moment.
+  locks when the last one stops. An open bet is cashed out for you at that moment, and the round on
+  screen plays out to its end, so you can watch the crash.
 - **5 to 10 people per table.** Rounds run on the server's clock, so nobody waits for anybody. Bots may
   fill up to 30% of a table and are marked with a gear (⚙).
-- **Terminal or desktop app.** In a terminal the game is a pane next to the chat. In the desktop app and
-  in editors it opens in your browser.
+- **Terminal or desktop app.** In a terminal the game is a pane next to the chat. In the desktop app it
+  opens in the app's own browser panel, in editors in your browser.
 
 ![The plane over the runway, the houses, the mountains, the clouds, then the fall](docs/scene.png)
 
@@ -55,10 +56,14 @@ times the multiplier, rounded down: 50 cashed out at 2.00x pays 100, a profit of
 Commands in Claude Code:
 
 - `/idlecrash` opens the game: the pane in a terminal, the browser elsewhere
-- `/idlecrash web` opens it in the browser. `/idlecrash link` prints the address instead
+- `/idlecrash web` opens it in a browser: the app's panel when there is one, else your default browser.
+  `/idlecrash link` prints the address instead
 - `/idlecrash off` and `/idlecrash on`: open the game by itself when Claude starts working, or not
 - `/idlecrash name <nickname>` changes your nickname
 - `/idlecrash top` shows the richest players
+
+Where the browser version opens is the `browser` setting: `auto` (the app's panel when there is one, else
+your default browser), `app` (only the panel) or `system` (always your default browser).
 
 ## The server
 

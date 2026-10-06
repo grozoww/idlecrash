@@ -16,6 +16,7 @@ const cfg: Config = {
   botPct: Number(process.env.BOT_PCT ?? DEFAULTS.botPct),
   bettingMs: Number(process.env.BETTING_MS ?? DEFAULTS.bettingMs),
   crashedMs: Number(process.env.CRASHED_MS ?? DEFAULTS.crashedMs),
+  maxMultiplier: Number(process.env.MAX_MULTIPLIER ?? DEFAULTS.maxMultiplier),
 }
 
 const MAX_SOCKETS_PER_IP = Number(process.env.MAX_SOCKETS_PER_IP ?? 10)
@@ -158,7 +159,8 @@ function pushState(ws: ServerWebSocket<Sock>, force = false): void {
   const now = Date.now()
   const working = game.isWorking(account.id, now)
   if (working) game.join(account, now)
-  const snapshot = working ? game.snapshot(account.id, now) : null
+  else game.touch(account, now) // a page still watching the last round keeps its seat until the round ends
+  const snapshot = game.snapshot(account.id, now)
   const sig = JSON.stringify([working, snapshot && signature(snapshot), account.name, account.balance])
   if (!force && sig === ws.data.lastSig) return
   ws.data.lastSig = sig

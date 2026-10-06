@@ -1,9 +1,11 @@
 // Starts the real server in a child process with short rounds and plays through
 // HTTP and a WebSocket, the way the mod and the page do.
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+setDefaultTimeout(30_000) // a round takes a few seconds, even a short one
 
 const PORT = 18_700 + Math.floor(Math.random() * 200)
 const BASE = `http://127.0.0.1:${PORT}`
@@ -13,9 +15,9 @@ let child: ReturnType<typeof Bun.spawn>
 beforeAll(async () => {
   child = Bun.spawn(['bun', 'src/server.ts'], {
     cwd: new URL('..', import.meta.url).pathname,
-    env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR: dataDir, BETTING_MS: '700', CRASHED_MS: '300', MAX_SOCKETS_PER_IP: '6', ACCOUNTS_PER_IP_HOUR: '1000' },
+    env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR: dataDir, BETTING_MS: '700', CRASHED_MS: '300', MAX_MULTIPLIER: '2', MAX_SOCKETS_PER_IP: '6', ACCOUNTS_PER_IP_HOUR: '1000' },
     stdout: 'ignore',
-    stderr: 'ignore',
+    stderr: process.env.E2E_LOGS ? 'inherit' : 'ignore',
   })
   for (let i = 0; i < 100; i++) {
     try {
@@ -150,7 +152,7 @@ describe('a game', () => {
     expect(idle.snapshot).toBeNull()
 
     page.send({ t: 'bet', amount: 50, auto: null })
-    expect((await page.until(ms => ms.find(m => m.t === 'ack'))).error).toBe('not-seated')
+    expect((await page.until(ms => ms.find(m => m.t === 'ack'))).error).toBe('locked')
 
     const beat = await post('/presence', { working: true, session: 's1' }, creds)
     expect(beat.pageOpen).toBe(true)
@@ -184,7 +186,14 @@ describe('a game', () => {
       const s = page.last('state')
       return s && !s.working ? s : undefined
     })
-    expect(after.snapshot).toBeNull()
+    expect(after.snapshot).not.toBeNull() // the round is still on screen: the page can watch it out
+    const mark = page.messages.length
+    page.send({ t: 'bet', amount: 50, auto: null })
+    expect((await page.until(ms => ms.slice(mark).find(m => m.t === 'ack'))).error).toBe('locked')
+    await page.until(ms => {
+      const s = page.last('state')
+      return s && !s.working && s.snapshot === null ? true : undefined
+    }, 8000) // and when that round is over, the table goes
     page.close()
   })
 

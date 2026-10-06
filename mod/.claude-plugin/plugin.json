@@ -1,6 +1,6 @@
 {
   "name": "idlecrash",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Crash with fake tokens against other people who are also waiting for Claude: in a pane on a terminal, in the browser elsewhere.",
   "author": {
     "name": "grozoww",
@@ -34,6 +34,17 @@
       "title": "Open when Claude starts working",
       "description": "Open the IdleCrash pane by itself at the start of every turn.",
       "default": true
+    },
+    "browser": {
+      "type": "string",
+      "title": "Where to open the game",
+      "description": "auto: the app's browser panel when there is one, else your default browser. app: only the panel. system: always your default browser.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "app",
+        "system"
+      ]
     }
   }
 }

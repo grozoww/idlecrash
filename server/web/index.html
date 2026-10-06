@@ -27,6 +27,9 @@
   #overlay { position: absolute; left: 22px; top: 18px; pointer-events: none; text-shadow: 0 2px 0 rgba(0,0,0,.55), 0 0 12px rgba(0,0,0,.35); }
   #big { font-size: 44px; font-weight: 800; line-height: 1; letter-spacing: .02em; }
   #sub { margin-top: 4px; font-size: 14px; color: #fff; }
+  #watch { position: absolute; right: 18px; top: 18px; max-width: 58%; padding: 6px 10px; font-size: 13px; color: var(--amber);
+           background: rgba(14, 16, 24, .8); border: 1px solid var(--line); border-radius: 4px; pointer-events: none; }
+  #watch[hidden] { display: none; }
   #lock { position: absolute; inset: 8px; display: grid; place-content: center; text-align: center; padding: 16px;
           background: rgba(14, 16, 24, .72); border-radius: 4px; font-size: 16px; }
   #lock[hidden] { display: none; }
@@ -71,6 +74,7 @@
   <section id="stage">
     <canvas id="scene" width="64" height="32"></canvas>
     <div id="overlay"><div id="big"></div><div id="sub"></div></div>
+    <div id="watch" hidden></div>
     <div id="lock" hidden></div>
   </section>
 

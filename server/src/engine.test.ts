@@ -277,7 +277,9 @@ describe('Claude is working', () => {
     game.tick(T0 + DEFAULTS.presenceMs + 1)
     expect(game.isWorking(account.id, T0 + DEFAULTS.presenceMs + 1)).toBe(false)
     expect(account.balance).toBe(1000) // refunded
-    expect(game.snapshot(account.id, T0 + DEFAULTS.presenceMs + 1)).toBeNull() // left the table
+    // the seat stays to watch the round out, and nothing can be bet from it
+    expect(game.snapshot(account.id, T0 + DEFAULTS.presenceMs + 1)).not.toBeNull()
+    expect(game.bet(account.id, 50, null, T0 + DEFAULTS.presenceMs + 2)).toEqual({ ok: false, error: 'locked' })
   })
 
   test('a heartbeat keeps it on', () => {
@@ -295,7 +297,7 @@ describe('Claude is working', () => {
     const out = game.setWorking(a.id, false, T0 + 8000 + 4000)
     expect(out?.cashed).toBe(payoutFor(100, multiplierAt(4000, 0.12)))
     expect(a.balance).toBe(900 + out!.cashed)
-    expect(game.bet(a.id, 50, null, T0 + 20_000)).toEqual({ ok: false, error: 'not-seated' })
+    expect(game.bet(a.id, 50, null, T0 + 20_000)).toEqual({ ok: false, error: 'locked' })
   })
 
   test('two sessions: one finishing does not lock the other', () => {
@@ -349,6 +351,67 @@ describe('limits', () => {
     expect(game.accounts.has(idle.id)).toBe(false)
     expect(game.accounts.has(playing.id)).toBe(true)
     expect(game.isDirty).toBe(true)
+  })
+})
+
+describe('watching the round out', () => {
+  const watcher = () => {
+    const w = setup({}, () => crashAt(3))
+    const a = w.join('ann')
+    return { ...w, a }
+  }
+
+  test('after Claude stops, the table stays on screen through the flight and the crash, then the seat goes', () => {
+    const { game, a } = watcher()
+    game.bet(a.id, 100, null, T0 + 10)
+    const flying = T0 + 8000 + 1000
+    const out = game.setWorking(a.id, false, flying)
+    expect(out?.cashed).toBeGreaterThan(0) // the open bet was cashed out at the moment it stopped
+    expect(game.snapshot(a.id, flying)?.table.phase).toBe('running')
+
+    const crashAfter = T0 + 8000 + 10_000 // the crash is at about 9.2 s into the flight
+    game.touch(a, crashAfter)
+    const seen = game.snapshot(a.id, crashAfter)
+    expect(seen?.table.phase).toBe('crashed') // still watching it
+    expect(seen?.table.crashPoint).toBeGreaterThan(2.9)
+    expect(seen?.table.crashPoint).toBeLessThan(3.1)
+
+    const nextRound = crashAfter + DEFAULTS.crashedMs + 50
+    game.touch(a, nextRound)
+    game.tick(nextRound)
+    expect(game.snapshot(a.id, nextRound)).toBeNull() // the new round does not include a watcher
+    expect(game.bet(a.id, 50, null, nextRound)).toEqual({ ok: false, error: 'locked' })
+  })
+
+  test('a watcher does not count as working, cannot bet, and is not paid twice', () => {
+    const { game, a } = watcher()
+    game.bet(a.id, 100, 2, T0 + 10)
+    const out = game.setWorking(a.id, false, T0 + 8000 + 500) // before 2.00x: the bet is cashed out now
+    const balance = a.balance
+    expect(out?.cashed).toBeGreaterThan(0)
+    game.touch(a, T0 + 8000 + 10_000)
+    game.tick(T0 + 8000 + 10_000) // the auto target 2.00x is "reached" later
+    expect(a.balance).toBe(balance) // nothing more is paid
+  })
+
+  test('if Claude is back before the round ends, the player keeps the seat', () => {
+    const { game, a } = watcher()
+    game.setWorking(a.id, false, T0 + 100)
+    game.setWorking(a.id, true, T0 + 200)
+    const later = T0 + 8000 + 60_000 // many rounds later
+    game.touch(a, later) // the page is still asking
+    game.tick(later)
+    expect(game.snapshot(a.id, later)).not.toBeNull()
+  })
+
+  test('a watching player is not kicked while their page keeps asking', () => {
+    const { game, a } = watcher()
+    game.setWorking(a.id, false, T0 + 100)
+    for (let t = T0 + 1000; t < T0 + 8000; t += 1000) {
+      game.touch(a, t)
+      game.tick(t)
+    }
+    expect(game.snapshot(a.id, T0 + 8000 - 1)).not.toBeNull()
   })
 })
 
