@@ -3,12 +3,18 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Feed, Local, Snapshot, Status } from '../types'
 import { AUTOS, STAKES, cleanName, fmt, pad, padStart, parseSnapshot, sign, times } from './shared/lib'
+import { drawScene, sceneInputFor } from './shared/scene'
 import type { SceneProps } from './shared/scene'
 import { cleanBase } from './util'
+import { CAPTION, PICTURE, controlsOf, deskView } from './desk'
+import type { ButtonSpec, DeskPress } from './desk'
+import { buttonSvg, captionSvg, overlayOf, stageSvg, statusSvg, tableSvg } from './desk-svg'
+import { picturePaths } from './pixels'
 
 const PANE = 'idlecrash'
 const DEFAULT_BASE = 'http://localhost:8787'
 const BEAT_MS = 2000
+const PAINT_MS = 125 // the desktop pane's picture is redrawn this often: `ui.invalidate` allows ten a second
 const AUTO_OPEN_EVERY_MS = 30 * 60_000
 
 const feed = atom({ plugin: 'idlecrash', key: 'feed' } as const, { snap: null, offset: 0 } as Feed)
@@ -43,6 +49,7 @@ let nickOption = ''
 let isAutoOpenOption = true
 let browserMode: 'auto' | 'app' | 'system' = 'auto'
 let timer: { cancel: () => void } | null = null
+let paintTimer: { cancel: () => void } | null = null // redraws the desktop pane for its moving picture
 let creds: { id: string; secret: string } | null = null
 let isBusy = false
 let isMuted = false // the person closed the pane during this turn
@@ -56,7 +63,8 @@ let isActing = false // a bet or cash-out is in flight
 let beatTimer: { cancel: () => void } | null = null // tells the server Claude is working
 let sessionId = 'default'
 let isWorking = false
-let hasTerminal = true // the session draws on a terminal, so the game lives in the pane
+let hasPane = true // the game lives in a pane of this mod: on a terminal and in the desktop app
+let isTerminal = true // a terminal window too narrow for the pane plays in the browser; the desktop app waits for /idlecrash
 let isPaneUnplaced = false // the pane is open but the window is too narrow to show it
 let beatFailures = 0
 let lastAutoOpen = -Infinity
@@ -245,10 +253,16 @@ async function cashOut($: EngineInterface): Promise<void> {
 
 // ---- the turn ------------------------------------------------------------
 
-/** The pane stops watching: back to the summary. */
-async function endWatching($: EngineInterface): Promise<void> {
+function stopTimers(): void {
   timer?.cancel()
   timer = null
+  paintTimer?.cancel()
+  paintTimer = null
+}
+
+/** The pane stops watching: back to the summary. */
+async function endWatching($: EngineInterface): Promise<void> {
+  stopTimers()
   await update($, status, s => ({ ...s, isWatching: false, isJoined: false }))
 }
 
@@ -383,6 +397,12 @@ async function maybeAutoOpen($: EngineInterface): Promise<void> {
   if (page && !page.isOpened) $.ui.toast(`IdleCrash: open ${page.url}`, { timeoutMs: 15_000 })
 }
 
+/** The terminal always plays in its pane. The desktop app does unless `browser` says app or system. */
+async function playsInPane($: EngineInterface): Promise<boolean> {
+  const surfaces = await $.session.surfaces()
+  return surfaces.includes('terminal') || (browserMode === 'auto' && surfaces.includes('desktop'))
+}
+
 /** Every 2 seconds while a turn runs. The server opens betting on this and locks it when it stops. */
 async function beat($: EngineInterface): Promise<void> {
   if (!isWorking) return
@@ -401,15 +421,15 @@ async function beat($: EngineInterface): Promise<void> {
     lastBalance = balance
     const isPageOpen = reply.json.pageOpen === true
     // The terminal plays in its pane. Everywhere else, and when the pane has no room, in the browser.
-    if (!isPageOpen && (!hasTerminal || isPaneUnplaced)) await maybeAutoOpen($)
-    if (!hasTerminal) {
+    if (!isPageOpen && (!hasPane || (isPaneUnplaced && isTerminal))) await maybeAutoOpen($)
+    if (!hasPane) {
       $.ui.status(
         `IdleCrash: ${isPageOpen ? 'playing in your browser' : 'page closed, /idlecrash opens it'} · balance ${fmt(balance)} (${sign(balance - startBalance)})`,
       )
     }
   } catch {
     beatFailures += 1
-    if (beatFailures === 2 && !hasTerminal) $.ui.status(`IdleCrash: cannot reach ${base}`)
+    if (beatFailures === 2 && !hasPane) $.ui.status(`IdleCrash: cannot reach ${base}`)
   }
 }
 
@@ -428,7 +448,9 @@ async function begin($: EngineInterface): Promise<void> {
   isWorking = true
   isPaneUnplaced = false
   sessionId = await $.session.id()
-  hasTerminal = (await $.session.surfaces()).includes('terminal')
+  const surfaces = await $.session.surfaces()
+  hasPane = await playsInPane($)
+  isTerminal = surfaces.includes('terminal')
   await update($, status, () => ({
     isWorking: true,
     isJoined: false,
@@ -446,7 +468,7 @@ async function begin($: EngineInterface): Promise<void> {
     void beat($)
   })
   await beat($)
-  if (!hasTerminal) {
+  if (!hasPane) {
     $.ui.status('IdleCrash: connecting…')
     return
   }
@@ -458,7 +480,11 @@ async function begin($: EngineInterface): Promise<void> {
       isPaneUnplaced = true
       if (!toldNarrow) {
         toldNarrow = true
-        $.ui.toast('IdleCrash: the window is narrower than 144 columns, so the game opens in your browser')
+        $.ui.toast(
+          isTerminal
+            ? 'IdleCrash: the window is narrower than 144 columns, so the game opens in your browser'
+            : 'IdleCrash: type /idlecrash to open the game',
+        )
       }
     }
   }
@@ -466,18 +492,26 @@ async function begin($: EngineInterface): Promise<void> {
   timer = $.clock.every(200, () => {
     void tick($)
   })
+  // The desktop pane's picture is an Svg the plugin redraws; the terminal's is a Client that moves on its own.
+  paintTimer?.cancel()
+  paintTimer =
+    browserMode === 'auto' && surfaces.includes('desktop')
+      ? $.clock.every(PAINT_MS, () => {
+          $.ui.invalidate('ui.render')
+        })
+      : null
 }
 
 async function finish($: EngineInterface): Promise<void> {
   beatTimer?.cancel()
   beatTimer = null
   if (!isWorking) {
-    timer?.cancel()
-    timer = null
+    stopTimers()
     return
   }
   isWorking = false
-  // Stopping the heartbeat settles an open bet on the server: cashed out, or refunded.
+  // Stopping the heartbeat locks new bets. An open bet stays in its round and can still be cashed out; an older
+  // server settled it at this moment instead (cashed out, or refunded), and says so in the reply.
   let text = 'Claude finished, betting is locked.'
   try {
     const reply = await api($, 'POST', '/presence', { working: false, session: sessionId })
@@ -496,15 +530,12 @@ async function finish($: EngineInterface): Promise<void> {
   }
   // On a terminal the pane stays and keeps showing this round to its end; the server holds the seat for it.
   const wasSeated = (await read($, status)).isJoined
-  const isWatching = hasTerminal && wasSeated
+  const isWatching = hasPane && wasSeated
   if (isWatching) watchUntil = (await $.clock.now()) + 120_000
-  else {
-    timer?.cancel()
-    timer = null
-  }
+  else stopTimers()
   await update($, status, s => ({ ...s, isWorking: false, isWatching, isJoined: isWatching, summary: text, note: null }))
   $.ui.toast(text, { timeoutMs: 6000 })
-  if (!hasTerminal) {
+  if (!hasPane) {
     $.ui.status(`IdleCrash: ${text}`)
     $.clock.after(20_000, () => {
       if (!isWorking) $.ui.status(undefined)
@@ -626,7 +657,7 @@ export const register: Register = (on, options) => {
       case 'web':
         return { text: await openInBrowser($) }
       default: {
-        if (!(await $.session.surfaces()).includes('terminal')) return { text: await openInBrowser($) }
+        if (!(await playsInPane($))) return { text: await openInBrowser($) }
         isMuted = false
         const opened = await $.ui.open({ id: PANE, title: 'IdleCrash', focus: true })
         const st = await read($, status)
@@ -638,6 +669,32 @@ export const register: Register = (on, options) => {
         }
       }
     }
+  })
+
+  // A click the desktop pane's click catchers post. It is input from code: only what the table allows now is done.
+  on('ui.message', async ($, e, next) => {
+    if (e.requestId !== PANE || !e.element.startsWith('btn-')) return next(e)
+    const press = (e.data ?? {}) as { a?: DeskPress['a']; v?: unknown }
+    const st = await read($, status)
+    const snap = (await read($, feed)).snap
+    const mine = snap?.you.bet ?? null
+    const canBet = st.isWorking && snap?.table.phase === 'betting' && !mine
+    const canCash = snap?.table.phase === 'running' && !!mine && mine.cash === null // never needs Claude to be working
+    if (press.a === 'bet') {
+      if (canBet) await placeBet($)
+    } else if (press.a === 'cash') {
+      if (canCash) await cashOut($)
+    } else if (!st.isWorking) {
+      // Nothing to set while Claude is not working: it cannot bet.
+    } else if (press.a === 'stake') {
+      const stake = press.v
+      if (typeof stake === 'number' && STAKES.includes(stake)) await update($, local, w => ({ ...w, stake }))
+    } else if (press.a === 'auto') {
+      await update($, local, w => ({ ...w, auto: AUTOS[(AUTOS.indexOf(w.auto) + 1) % AUTOS.length] ?? null }))
+    } else if (press.a === 'rebet') {
+      await update($, local, w => ({ ...w, isRebet: !w.isRebet }))
+    }
+    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -654,6 +711,61 @@ export const register: Register = (on, options) => {
         <Text dimColor>  fake tokens only</Text>
       </Box>
     )
+
+    if (e.surface === 'desktop' && browserMode === 'auto') {
+      // The pictures are Svg in this tree and are redrawn many times a second, so nothing that is pressed lives
+      // here: a button in this tree would blink at every redraw. Each button is a Client, redrawn on change.
+      const { Client, Svg } = $.ui.resolve(e)
+      const view = deskView(snap, wish, st, (await $.clock.now()) + f.offset)
+      const controls = controlsOf(view.controls)
+      let stage: string
+      if (view.scene) {
+        const sceneProps: SceneProps = { ...view.scene, columns: PICTURE.width, rows: PICTURE.height / 2 }
+        const { input, multiplier, serverNow } = sceneInputFor(sceneProps, 0)
+        const overlay = overlayOf(view.scene, multiplier, serverNow)
+        const picture = picturePaths(drawScene(input, PICTURE.width, PICTURE.height), PICTURE.width, PICTURE.height)
+        stage = stageSvg({ head: view.head, picture, big: overlay.big, bigColor: overlay.color, sub: overlay.sub, watch: view.watch, message: null })
+      } else {
+        stage = stageSvg({ head: view.head, picture: null, big: '', bigColor: '', sub: '', watch: null, message: view.message })
+      }
+      // A button is a picture, the same picture lit over it while the pointer is on it (the app does that, no code of
+      // ours), and a Client over both that catches the click. Nothing in an Svg can be pressed.
+      const face = (b: ButtonSpec) => (
+        <Box key={`w-${b.id}`} width={b.share}>
+          <Svg source={buttonSvg(b, 'rest')} alt={b.label} />
+          {!b.isDisabled && (
+            <Box position="absolute" top={0} left={0} right={0} bottom={0} display="none" hover={{ display: 'flex' }}>
+              <Svg source={buttonSvg(b, 'hot')} alt={`${b.label}, lit`} />
+            </Box>
+          )}
+          {!b.isDisabled && (
+            <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
+              <Client key={`btn-${b.id}`} module="./hit-client.tsx" props={{ press: b.press }} width="100%" height={12} />
+            </Box>
+          )}
+        </Box>
+      )
+      return (
+        <Box flexDirection="column" rowGap={1}>
+          <Svg source={stage} alt={view.message ? `${view.message.title}. ${view.message.text}` : 'IdleCrash: the plane and the multiplier'} />
+          {controls && (
+            <Box flexDirection="column">
+              {'button' in controls.main ? face(controls.main.button) : <Svg source={statusSvg(controls.main.text, controls.main.color)} alt={controls.main.text} />}
+              <Box>
+                <Box width={CAPTION.share}>
+                  <Svg source={captionSvg('stake')} alt="stake" />
+                </Box>
+                {controls.stakes.map(face)}
+              </Box>
+              <Box>{controls.options.map(face)}</Box>
+              <Text color={view.controls.isNoticeError ? 'error' : 'warning'}>{view.controls.notice || ' '}</Text>
+            </Box>
+          )}
+          {view.table && <Svg source={tableSvg(view.table)} alt="The table: players and the last crashes" />}
+          <Text dimColor>Fake tokens only. Nothing here is worth anything. Bets are open only while Claude is working.</Text>
+        </Box>
+      )
+    }
 
     if (e.surface !== 'terminal') {
       return (
@@ -748,17 +860,18 @@ export const register: Register = (on, options) => {
 
     const room = Math.max(3, Math.floor((width - 6) / 6))
 
+    // An open bet can be cashed out while the plane flies, whether Claude is still working or not.
     let action
-    if (!st.isWorking) {
-      action = <Text color="warning">Claude finished: betting is locked. Watching this round.</Text>
-    } else if (phase === 'betting' && !mine) {
-      action = <Button key="bet" label={`b · Bet ${fmt(wish.stake)}`} hotkey="b" variant="primary" onPress={() => placeBet($)} />
-    } else if (isLive && phase === 'running') {
+    if (isLive && phase === 'running') {
       action = <Button key="cash" label="c · CASH OUT" hotkey="c" variant="primary" onPress={() => cashOut($)} />
-    } else if (mine && phase === 'betting') {
-      action = <Text color="warning">bet placed: {fmt(mine.amount)}{mine.auto ? ` · auto ${times(mine.auto)}` : ''}</Text>
     } else if (mine && mine.cash !== null) {
       action = <Text color="success">cashed out {times(mine.cash)}: paid {fmt(mine.payout)}</Text>
+    } else if (!st.isWorking) {
+      action = <Text color="warning">{isLive ? 'Claude finished: betting is locked. Your bet is still in: cash out before the crash.' : 'Claude finished: betting is locked. Watching this round.'}</Text>
+    } else if (phase === 'betting' && !mine) {
+      action = <Button key="bet" label={`b · Bet ${fmt(wish.stake)}`} hotkey="b" variant="primary" onPress={() => placeBet($)} />
+    } else if (mine && phase === 'betting') {
+      action = <Text color="warning">bet placed: {fmt(mine.amount)}{mine.auto ? ` · auto ${times(mine.auto)}` : ''}</Text>
     } else {
       action = <Text dimColor>next round soon</Text>
     }
@@ -779,21 +892,21 @@ export const register: Register = (on, options) => {
             <Text color={point >= 2 ? 'success' : 'error'}>{point.toFixed(2)} </Text>
           ))}
         </Box>
-        <Box>{action}</Box>
-        <Box>
-          <Text dimColor>{st.isWorking ? 'stake ' : ' '}</Text>
+        <Box marginTop={1}>{action}</Box>
+        <Box columnGap={2}>
+          <Text dimColor>{st.isWorking ? 'stake' : ' '}</Text>
           {(st.isWorking ? STAKES : []).map((s, i) => (
             <Button
               key={`stake${i + 1}`}
               plain
               hotkey={String(i + 1)}
-              label={fmt(s)}
+              label={wish.stake === s ? `[${fmt(s)}]` : fmt(s)}
               dimColor={wish.stake !== s}
               onPress={() => update($, local, w => ({ ...w, stake: s }))}
             />
           ))}
         </Box>
-        <Box>
+        <Box columnGap={3}>
           {st.isWorking && (<Button
             key="auto"
             plain
@@ -803,7 +916,6 @@ export const register: Register = (on, options) => {
               update($, local, w => ({ ...w, auto: AUTOS[(AUTOS.indexOf(w.auto) + 1) % AUTOS.length] ?? null }))
             }
           />)}
-          <Text>{st.isWorking ? '  ' : ' '}</Text>
           {st.isWorking && (<Button
             key="rebet"
             plain
@@ -813,7 +925,7 @@ export const register: Register = (on, options) => {
           />)}
         </Box>
         <Text color={st.error ? 'error' : 'warning'}>{st.error ?? st.note ?? (st.isWorking ? ' ' : (st.summary ?? ' '))}</Text>
-        <Text dimColor>{st.isWorking ? 'Claude is working. Bets lock when it finishes.' : ' '}</Text>
+        <Text dimColor>{st.isWorking ? 'Claude is working. Bets lock when it finishes.' : isLive && phase === 'running' ? 'Claude finished: betting is locked. Your bet is still in: cash out before the crash.' : ' '}</Text>
       </Box>
     )
   })

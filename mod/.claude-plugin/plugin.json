@@ -1,6 +1,6 @@
 {
   "name": "idlecrash",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Crash with fake tokens against other people who are also waiting for Claude: in a pane on a terminal, in the browser elsewhere.",
   "author": {
     "name": "grozoww",
@@ -38,7 +38,7 @@
     "browser": {
       "type": "string",
       "title": "Where to open the game",
-      "description": "auto: the app's browser panel when there is one, else your default browser. app: only the panel. system: always your default browser.",
+      "description": "auto: the game plays in a pane of its own in a terminal and in the desktop app, and in your browser elsewhere. app: in the desktop app, the app's browser panel. system: always your default browser.",
       "default": "auto",
       "options": [
         "auto",

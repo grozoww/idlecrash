@@ -10,12 +10,13 @@ back to work.
 
 - **No real money.** Tokens are fake. They cannot be bought, sold or withdrawn.
 - **Only while Claude works.** Betting is open while any of your Claude Code sessions is working and
-  locks when the last one stops. An open bet is cashed out for you at that moment, and the round on
-  screen plays out to its end, so you can watch the crash.
+  locks when the last one stops. An open bet stays in its round: you can still cash out until the plane
+  crashes (an auto cash-out still works), and the round plays out on screen. If it crashes first, the
+  stake is lost.
 - **5 to 10 people per table.** Rounds run on the server's clock, so nobody waits for anybody. Bots may
   fill up to 30% of a table and are marked with a gear (⚙).
-- **Terminal or desktop app.** In a terminal the game is a pane next to the chat. In the desktop app it
-  opens in the app's own browser panel, in editors in your browser.
+- **Terminal or desktop app.** In a terminal and in the desktop app the game is a pane next to the chat.
+  In editors it opens in your browser.
 
 ![The plane over the runway, the houses, the mountains, the clouds, then the fall](docs/scene.png)
 
@@ -49,21 +50,26 @@ In the browser, click the page first. Then:
 | `r` | Bet again every round |
 | `space` | Bet or cash out, whichever fits (browser) |
 
+In the desktop app the game is a pane in the side panel: the picture, the table and the buttons. Click the
+buttons. The app sends typed keys to the chat, so a pane gets no keyboard there. The pane opens by itself when
+Claude starts working; type `/idlecrash` if it does not. While you hold the mouse button down the app pauses the
+whole side panel, and it catches up when you let go.
+
 Auto cash-out is paid by the server at exactly that number, so you can leave the game alone. You start
 with 1000 tokens. If you go broke you get 200 back, at most once every 10 minutes. The payout is the stake
 times the multiplier, rounded down: 50 cashed out at 2.00x pays 100, a profit of 50.
 
 Commands in Claude Code:
 
-- `/idlecrash` opens the game: the pane in a terminal, the browser elsewhere
+- `/idlecrash` opens the game: the pane in a terminal and in the desktop app, the browser elsewhere
 - `/idlecrash web` opens it in a browser: the app's panel when there is one, else your default browser.
   `/idlecrash link` prints the address instead
 - `/idlecrash off` and `/idlecrash on`: open the game by itself when Claude starts working, or not
 - `/idlecrash name <nickname>` changes your nickname
 - `/idlecrash top` shows the richest players
 
-Where the browser version opens is the `browser` setting: `auto` (the app's panel when there is one, else
-your default browser), `app` (only the panel) or `system` (always your default browser).
+Where the game plays is the `browser` setting: `auto` (a pane in a terminal and in the desktop app, your
+browser in editors), `app` (in the desktop app, the app's browser panel) or `system` (always your default browser).
 
 ## The server
 

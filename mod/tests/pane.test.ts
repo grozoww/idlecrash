@@ -77,6 +77,30 @@ describe('a turn on a terminal', () => {
     expect(calls.length).toBe(done) // all quiet
   })
 
+  test('after Claude stops, an open bet can still be cashed out while the plane flies', async ($, on) => {
+    const { clock, calls, state } = world(on, { surfaces: ['terminal'] })
+    await $.session.start(START)
+    await $.turn.start({ text: 'x', turnId: 't1' })
+    await clock.advance(1500)
+    const ui = await mount($)
+    await ui.press({ key: 'bet' })
+    state.phase = 'running'
+    state.phaseStart = clock.now() - 8000 - 2000
+    await clock.advance(500)
+
+    await $.turn.complete(DONE)
+    await clock.advance(1500)
+    expect(await ui.find({ type: 'Text', text: /Your bet is still in/ })).toBeDefined() // it says so
+    expect(await ui.find({ key: 'bet' })).toBeUndefined() // nothing new can be bet
+    expect(await ui.find({ key: 'auto' })).toBeUndefined()
+    expect(await ui.find({ key: 'cash' })).toBeDefined() // but the bet can be taken
+    await ui.press({ key: 'cash' })
+    expect(paths(calls)).toContain('POST /cashout')
+    expect(state.balance).toBe(1050)
+    expect(await ui.find({ type: 'Text', text: /cashed out 2\.00x: paid 100/ })).toBeDefined()
+    expect(await ui.find({ key: 'cash' })).toBeUndefined() // and it is gone once it is taken
+  })
+
   test('a round that never ends is not watched for ever', async ($, on) => {
     const { clock, calls } = world(on, { surfaces: ['terminal'] })
     await $.session.start(START)
@@ -193,7 +217,7 @@ describe('what the pane shows', () => {
     expect(JSON.stringify(await ui.drawn())).not.toContain('\u0007')
   })
 
-  test('the terminal gets the game; every other surface gets a button that opens the browser', async ($, on) => {
+  test('the terminal gets the game; an editor and a phone get a button that opens the browser', async ($, on) => {
     const { clock, opened } = world(on, { surfaces: ['terminal'] })
     await $.session.start(START)
     await $.turn.start({ text: 'x', turnId: 't1' })
@@ -201,14 +225,14 @@ describe('what the pane shows', () => {
     const terminal = await mount($, 'terminal')
     expect(await terminal.find({ key: 'bet' })).toBeDefined()
     await terminal.unmount()
-    for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    for (const surface of ['vscode', 'mobile'] as const) {
       const ui = await mount($, surface)
       expect(await ui.find({ key: 'bet' })).toBeUndefined()
       expect(await ui.find({ type: 'Text', text: /opens in your browser/ })).toBeDefined()
       await ui.unmount()
     }
-    const desktop = await mount($, 'desktop')
-    await desktop.press({ key: 'web' })
+    const editor = await mount($, 'vscode')
+    await editor.press({ key: 'web' })
     await clock.advance(50)
     expect(opened).toEqual([['open', `${BASE}/?c=abcDEF123xyz`]])
   })
@@ -228,8 +252,8 @@ describe('commands on a terminal', () => {
   })
 })
 
-describe('on the desktop app', () => {
-  test('/idlecrash opens the browser, not a pane', async ($, on) => {
+describe('on the desktop app with the browser asked for', () => {
+  test('"system" plays in the default browser, not in a pane', { options: { browser: 'system' } }, async ($, on) => {
     const { opened, paneOpens } = world(on, { surfaces: ['desktop'] })
     await $.session.start(START)
     await run($)

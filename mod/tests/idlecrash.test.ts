@@ -1,4 +1,4 @@
-// The browser side: presence, opening the page, commands. The session here draws on the desktop app.
+// The browser side: presence, opening the page, commands. The session here draws on an editor, which has no pane of ours.
 import { describe, expect, test } from 'claude-code/testing'
 
 import { cleanBase } from '../hooks/util'
@@ -49,8 +49,9 @@ describe('a turn', () => {
     expect(calls.some(c => c.body.working === false)).toBe(false)
   })
 
-  test('the finish shows the balance and what happened to an open bet, on the status line and as a toast', async ($, on) => {
-    const { clock, statuses, toasts } = world(on, { pageOpen: true })
+  test('the finish shows the balance and, from an older server, what happened to an open bet', async ($, on) => {
+    const { clock, state, statuses, toasts } = world(on, { pageOpen: true })
+    state.oldServer = true
     await $.session.start(START)
     await $.turn.start({ text: 'x', turnId: 't1' })
     await clock.advance(3000)
@@ -63,7 +64,7 @@ describe('a turn', () => {
   })
 })
 
-describe('opening the page (no terminal: the desktop app)', () => {
+describe('opening the page (a surface with no pane of ours: an editor)', () => {
   test('opens it once when it is not open, with a one-time code and never the secret', async ($, on) => {
     const { clock, calls, opened } = world(on, { pageOpen: false })
     await $.session.start(START)
@@ -153,7 +154,7 @@ describe('the app\'s browser panel', () => {
     expect(out.text).toMatch(/app's browser panel/)
   })
 
-  test('auto-opens there when Claude starts working in the desktop app', async ($, on) => {
+  test('auto-opens there when Claude starts working and the page is not open', async ($, on) => {
     const { clock, opened, appOpens } = world(on, { appBrowser: true })
     await $.session.start(START)
     await $.turn.start({ text: 'x', turnId: 't1' })

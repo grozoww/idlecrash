@@ -39,6 +39,7 @@ export function world(on: On, opts: Opts = {}) {
     balance: 1000,
     bet: null as Bet,
     playerName: 'me',
+    oldServer: false, // an older server settled an open bet when Claude stopped; the new one leaves it in its round
   }
 
   const snapshot = () => ({
@@ -81,7 +82,7 @@ export function world(on: On, opts: Opts = {}) {
         state.accounts += 1
         return answer({ ok: true, creds: { id: 'acct1', secret: 'secret1' }, name: 'Guest1234', balance: state.balance })
       case 'POST /presence': {
-        const locked = body.working === false ? { cashed: 120, refunded: 0 } : undefined
+        const locked = body.working === false ? (state.oldServer ? { cashed: 120, refunded: 0 } : { cashed: 0, refunded: 0 }) : undefined
         if (body.working === false) state.seatKept = true
         return answer({ ok: true, pageOpen: state.pageOpen, name: 'Guest1234', balance: state.balance, locked })
       }
@@ -121,13 +122,15 @@ export function world(on: On, opts: Opts = {}) {
   const toasts: string[] = []
   const paneOpens: unknown[] = []
   const appOpens: string[] = []
+  const invalidates: unknown[] = [] // redraws the plugin asked for
   on('http.fetch', handle as never)
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('command.register', () => ({ value: { command: 'idlecrash' } }))
   on('session.id', () => ({ value: 'session-A' }))
-  on('session.surfaces', () => ({ value: opts.surfaces ?? ['desktop'] }) as never)
+  // An editor by default: a surface with no pane of ours, so the game plays in the browser. The terminal and the desktop app have panes.
+  on('session.surfaces', () => ({ value: opts.surfaces ?? ['vscode'] }) as never)
   on('ui.panes', () => ({
     value: [{ id: 'idlecrash', title: 'IdleCrash', isShown: true, isFocused: false, isPlaced: opts.isPlaced ?? true }],
   }))
@@ -135,7 +138,10 @@ export function world(on: On, opts: Opts = {}) {
     paneOpens.push(e)
     return { value: { isPlaced: opts.isPlaced ?? true } } as never
   })
-  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.invalidate', (_$, e) => {
+    invalidates.push(e)
+    return { value: undefined } as never
+  })
   on('ui.log', () => ({ value: undefined }))
   on('process.run', (_$, e) => {
     opened.push([...(e as { argv: string[] }).argv])
@@ -160,7 +166,7 @@ export function world(on: On, opts: Opts = {}) {
     return { value: undefined } as never
   })
 
-  return { clock, calls, state, opened, statuses, toasts, paneOpens, appOpens }
+  return { clock, calls, state, opened, statuses, toasts, paneOpens, appOpens, invalidates }
 }
 
 export const START = { cwd: '/tmp', surface: 'terminal', isInteractive: true } as const

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- In the desktop app the game is now a pane of its own in the side panel, not a browser window. The plane, the
+  header and the table are vector pictures in the web page's colors, and the buttons are pictures too: they light
+  up under the pointer. All of it scales with the pane. The pane stays put when a bet is placed or a turn ends.
+- The desktop app sends typed keys to the chat, so a pane there has no keyboard: use the mouse. While the mouse
+  button is held down the app pauses the whole side panel; it catches up when you let go.
+- The old behavior is a setting away: `browser` = `app` (the app's browser panel) or `system` (your default
+  browser). A desktop app that does not open the pane by itself waits for `/idlecrash`; it no longer opens a
+  browser instead. `/idlecrash web` still opens the browser.
+- When Claude stops, an open bet is no longer cashed out for you. New bets stay locked, but the bet stays in its
+  round and you can still cash out, in the terminal pane, the desktop pane and on the page, until the plane
+  crashes; an auto cash-out still pays, and a bet left alone at the crash is lost. This is a rule of the server,
+  so it needs the new server: an older one still cashes the bet out at that moment, and the mod says so.
+- The terminal pane: spaces between the stakes, the picked stake in brackets, a blank line before the buttons.
+
 ## 0.2.1
 
 - When the app's browser panel cannot be used, `/idlecrash` now says why (no such tool in this session, the
