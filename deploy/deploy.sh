@@ -64,5 +64,17 @@ f=/var/lib/idlecrash/accounts.json
 find /var/backups/idlecrash -name "accounts-*.json" -mtime +14 -delete
 EOS
 sudo chmod 0755 /etc/cron.daily/idlecrash-backup
+
+# The machine's own firewall: only ssh, http, https and http/3 come in. The same rules as in cloud-init.yaml,
+# and safe to repeat, so a machine that was set up before this existed gets it now. ssh is allowed before the
+# firewall is turned on, and a connection that is already open stays open, so this cannot lock you out.
+# `allow`, not `limit` for ssh: this script and the CI deploy open several connections in a row.
+sudo ufw default deny incoming >/dev/null
+sudo ufw default allow outgoing >/dev/null
+sudo ufw allow 22/tcp >/dev/null
+sudo ufw allow 80/tcp >/dev/null
+sudo ufw allow 443/tcp >/dev/null
+sudo ufw allow 443/udp >/dev/null
+sudo ufw --force enable
 REMOTE
 echo "deployed $REF: https://$HOST/health"
