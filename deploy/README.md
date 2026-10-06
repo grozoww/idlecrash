@@ -16,8 +16,8 @@ HTTPS certificate by itself. The game server listens on `127.0.0.1:8787` only, b
    SSH_KEY=~/.ssh/your_key deploy/deploy.sh deploy@203.0.113.7 203-0-113-7.sslip.io ci_key.pub
    ```
 
-   It writes the Caddyfile, installs the systemd unit (memory capped, read-only file system except the
-   data folder), clones the repo to `/opt/idlecrash/repo` and runs it from there, and sets up a daily
+   It writes the Caddyfile, installs the systemd unit (memory capped, no capabilities, private `/dev`,
+   read-only file system except the data folder), clones the repo to `/opt/idlecrash/repo` and runs it from there, and sets up a daily
    backup of the accounts file (14 kept). `ci_key.pub` is optional: see "Deploy on every push" below.
 5. Check it with `bun server/scripts/check-remote.ts https://203-0-113-7.sslip.io`. It plays one round
    over HTTPS and a secure WebSocket.
