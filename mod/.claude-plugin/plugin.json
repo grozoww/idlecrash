@@ -1,0 +1,39 @@
+{
+  "name": "idlecrash",
+  "version": "0.1.0",
+  "description": "Crash with fake tokens against other people who are also waiting for Claude: in a pane on a terminal, in the browser elsewhere.",
+  "author": {
+    "name": "grozoww",
+    "url": "https://github.com/grozoww"
+  },
+  "homepage": "https://github.com/grozoww/idlecrash",
+  "repository": "https://github.com/grozoww/idlecrash",
+  "license": "MIT",
+  "keywords": [
+    "game",
+    "crash",
+    "idle",
+    "fun"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "serverUrl": {
+      "type": "string",
+      "title": "Server URL",
+      "description": "The IdleCrash server everyone plays on. Change it only to use your own.",
+      "default": "https://178-105-28-170.sslip.io"
+    },
+    "nickname": {
+      "type": "string",
+      "title": "Nickname",
+      "description": "Shown to other players. Empty means a random Guest name.",
+      "default": ""
+    },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open when Claude starts working",
+      "description": "Open the IdleCrash pane by itself at the start of every turn.",
+      "default": true
+    }
+  }
+}

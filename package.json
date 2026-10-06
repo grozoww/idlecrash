@@ -1,0 +1,12 @@
+{
+  "name": "idlecrash",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./server ./shared",
+    "test:mod": "cd mod && claude plugin test .",
+    "sync": "bun tools/sync-shared.ts",
+    "start": "cd server && bun src/server.ts"
+  }
+}

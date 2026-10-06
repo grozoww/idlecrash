@@ -1,0 +1,15 @@
+{
+  "name": "grozoww-mods",
+  "owner": { "name": "grozoww", "url": "https://github.com/grozoww" },
+  "metadata": { "description": "Mods for Claude Code by grozoww" },
+  "plugins": [
+    {
+      "name": "idlecrash",
+      "source": "./mod",
+      "description": "Crash with fake tokens against other people who are also waiting for Claude.",
+      "version": "0.1.0",
+      "category": "games",
+      "keywords": ["game", "crash", "idle", "fun"]
+    }
+  ]
+}

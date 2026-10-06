@@ -1,0 +1,41 @@
+#cloud-config
+# Sets up a small Ubuntu 24.04 server for IdleCrash.
+# Replace __SSH_PUBLIC_KEY__ with your public key before using it.
+ssh_pwauth: false
+disable_root: true
+users:
+  - name: deploy
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+  - name: idlecrash
+    system: true
+    shell: /usr/sbin/nologin
+    no_create_home: true
+package_update: true
+package_upgrade: true
+packages: [caddy, fail2ban, curl, unzip, rsync, unattended-upgrades]
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-idlecrash.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+runcmd:
+  - mkdir -p /opt/idlecrash /var/lib/idlecrash /opt/bun/bin
+  - chown idlecrash:idlecrash /var/lib/idlecrash
+  - chown -R deploy:deploy /opt/idlecrash
+  - |
+    set -e
+    cd /tmp
+    V=bun-v1.3.12
+    curl -fsSL -O "https://github.com/oven-sh/bun/releases/download/$V/bun-linux-x64.zip"
+    curl -fsSL -O "https://github.com/oven-sh/bun/releases/download/$V/SHASUMS256.txt"
+    grep -E ' \*?(\./)?bun-linux-x64\.zip$' SHASUMS256.txt | sha256sum -c -
+    unzip -o bun-linux-x64.zip
+    install -m 0755 bun-linux-x64/bun /opt/bun/bin/bun
+  - systemctl restart ssh
+  - systemctl enable --now fail2ban

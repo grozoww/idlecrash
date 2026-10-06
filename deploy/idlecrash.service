@@ -1,0 +1,25 @@
+[Unit]
+Description=IdleCrash game server
+After=network.target
+
+[Service]
+User=idlecrash
+Group=idlecrash
+WorkingDirectory=/opt/idlecrash/server
+Environment=PORT=8787 HOST=127.0.0.1 DATA_DIR=/var/lib/idlecrash TRUST_PROXY=1
+ExecStart=/opt/bun/bin/bun src/server.ts
+Restart=always
+RestartSec=2
+MemoryMax=600M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/idlecrash
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
