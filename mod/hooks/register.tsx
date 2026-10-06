@@ -5,7 +5,8 @@ import type { Feed, Local, Snapshot, Status } from '../types'
 import { AUTOS, STAKES, cleanName, fmt, pad, padStart, parseSnapshot, sign, times } from './shared/lib'
 import { drawScene, sceneInputFor } from './shared/scene'
 import type { SceneProps } from './shared/scene'
-import { cleanBase } from './util'
+import { PROTOCOL, PROTOCOL_HEADER } from './shared/protocol'
+import { cleanBase, skewOf, skewText } from './util'
 import { CAPTION, PICTURE, controlsOf, deskView } from './desk'
 import type { ButtonSpec, DeskPress } from './desk'
 import { buttonSvg, captionSvg, overlayOf, stageSvg, statusSvg, tableSvg } from './desk-svg'
@@ -34,6 +35,7 @@ const ERRORS: Record<string, string> = {
   'not-seated': 'Not seated, rejoining',
   'rate-limited': 'Slow down, server is busy',
   locked: 'Claude is not working, betting is locked',
+  'mod-too-old': 'This mod is too old for the server: update it',
 }
 
 /** A refusal the player can read: the server's code is shown when we have no words for it. */
@@ -55,6 +57,8 @@ let lastPoll = 0
 let lastJoinTry = 0
 let failures = 0
 let toldNarrow = false
+let skew: string | null = null // set while the server and this mod are of different ages: what the pane says about it
+let toldSkew = false
 let notedKey = ''
 let rebetRound = -1
 let isActing = false // a bet or cash-out is in flight
@@ -90,7 +94,7 @@ async function api(
   isTimed = false,
 ): Promise<Reply> {
   if (!isBaseValid) throw new Error('invalid serverUrl')
-  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const headers: Record<string, string> = { 'content-type': 'application/json', [PROTOCOL_HEADER]: String(PROTOCOL) }
   if (creds) headers.authorization = `Bearer ${creds.id}.${creds.secret}`
   // A press must reach the server first: no clock reads in front of the request.
   const t0 = isTimed ? await $.clock.now() : undefined
@@ -106,8 +110,13 @@ async function api(
   } catch {
     json = null
   }
+  const kind = skewOf(res.status, json)
+  skew = kind ? skewText(kind, base) : null
   return { status: res.status, json, t0, t1 }
 }
+
+/** What the pane says when a call failed: that the server and the mod do not fit, or that we cannot reach it. */
+const trouble = (fallback: string): string => skew ?? fallback
 
 async function setNote($: EngineInterface, text: string): Promise<void> {
   await update($, status, s => ({ ...s, note: text }))
@@ -188,7 +197,7 @@ async function join($: EngineInterface): Promise<void> {
     failures = 0
     await update($, status, s => ({ ...s, isJoined: true, error: null }))
   } catch {
-    await update($, status, s => ({ ...s, isJoined: false, error: `Cannot reach ${base}` }))
+    await update($, status, s => ({ ...s, isJoined: false, error: trouble(`Cannot reach ${base}`) }))
   }
 }
 
@@ -220,7 +229,7 @@ async function placeBet($: EngineInterface): Promise<void> {
     if (reply.json?.ok) await apply($, reply)
     else await setNote($, refusal(reply.json?.error, 'Bet refused'))
   } catch {
-    await setNote($, 'Server did not answer')
+    await setNote($, trouble('Server did not answer'))
   } finally {
     isActing = false
   }
@@ -238,7 +247,7 @@ async function cashOut($: EngineInterface): Promise<void> {
     if (reply.json?.ok) await apply($, reply)
     else await setNote($, refusal(reply.json?.error, 'Cash out refused'))
   } catch {
-    await setNote($, 'Server did not answer')
+    await setNote($, trouble('Server did not answer'))
   } finally {
     isActing = false
   }
@@ -293,7 +302,7 @@ async function tick($: EngineInterface): Promise<void> {
       failures = 0
     } catch {
       failures += 1
-      if (failures >= 3) await update($, status, s => ({ ...s, error: `Cannot reach ${base}` }))
+      if (failures >= 3 || skew) await update($, status, s => ({ ...s, error: trouble(`Cannot reach ${base}`) }))
     }
   } finally {
     isBusy = false
@@ -341,6 +350,12 @@ async function beat($: EngineInterface): Promise<void> {
     lastBalance = balance
   } catch {
     // The server did not answer: the next beat tries again, and the pane says when it cannot reach it.
+    // A server and a mod that do not fit are said once a turn, in a toast: the pane may be closed, and then
+    // nothing else would tell the player why nothing works.
+    if (skew && !toldSkew) {
+      toldSkew = true
+      $.ui.toast(skew, { timeoutMs: 10_000 })
+    }
   }
 }
 
@@ -350,6 +365,7 @@ async function begin($: EngineInterface): Promise<void> {
   if (!(await hasPaneHere($))) return // an editor or a phone: there is nothing to play on
   isMuted = false
   toldNarrow = false
+  toldSkew = false
   failures = 0
   notedKey = ''
   rebetRound = -1

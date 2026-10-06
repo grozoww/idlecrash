@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+- The mod and the server now tell each other how old they are. A mod sends its protocol number with every call and
+  the server answers with its own (`/health` also says the server's version), so an old mod and a new server, or
+  the other way round, say so instead of failing in odd ways: a mod the server no longer serves is told to update
+  (`claude plugin update idlecrash@grozoww-mods`) in the pane and in a toast, and a mod that needs a newer server
+  says the server is behind. Nothing is refused yet: mods from before this count as protocol 0, and the server
+  still serves them. The rules for raising the numbers are in `shared/protocol.ts`.
+- Releases and deploys are one pipeline now: a push to `main` deploys the server when it changed, checks the
+  live server runs this version, and then publishes the GitHub Release for the version in `plugin.json`.
+  A test keeps the version in every file the same, and keeps a changelog entry for it.
+
 ## 0.3.0
 
 - In the desktop app the game is now a pane of its own in the side panel, not a browser window. The plane, the

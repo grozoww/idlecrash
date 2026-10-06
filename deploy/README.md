@@ -33,8 +33,11 @@ for the rate limit and the limit on new accounts.
 
 ## Deploy on every push
 
-`.github/workflows/deploy.yml` tests every push to `main` that changes `server/` or `shared/`, deploys it,
-and then plays one round on the live server (`check-remote.ts`).
+`.github/workflows/deploy.yml` tests every push to `main`. When the push changes `server/` or `shared/` (or the
+workflow itself), it deploys the commit and then plays one round on the live server (`check-remote.ts`), which also
+checks that the server says this commit's version and protocol. Last, it publishes the GitHub Release (see
+"A new version" below). The release waits for the deploy on purpose: people can update the mod as soon as
+`main` has the new version, so the server it needs has to be live first.
 
 The workflow logs in with a key of its own, and that key can do one thing on the server: run
 `/usr/local/bin/idlecrash-deploy <commit>` (a forced command, no shell, no forwarding). The script only
@@ -57,3 +60,20 @@ Compare the host key `ssh-keyscan` prints with `ssh-keygen -lf /etc/ssh/ssh_host
 machine before you trust it. Changes under `deploy/` are not rolled out by the workflow, because they run
 with more rights: apply them with `deploy/deploy.sh`. The `ufw` rules are one of those changes: a machine that
 already exists gets them with one run of `deploy/deploy.sh`.
+
+## A new version
+
+The version lives in four files that must agree (a test checks): `package.json`, `server/package.json`,
+`mod/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`. People get a new mod only when
+that number goes up, so a change to the mod needs a bump.
+
+1. `bun tools/bump-version.ts 0.3.2`, and write the changelog entry (`## 0.3.2` at the top of `CHANGELOG.md`).
+2. If a mod and a server of different ages can no longer play together, change the protocol numbers in
+   `shared/protocol.ts` (the rules are written there), then `bun tools/sync-shared.ts`.
+3. Merge to `main`. The workflow deploys, checks, and publishes `idlecrash--v0.3.2` with the changelog entry as
+   its notes. A version that already has a release is left alone, so a merge that does not bump publishes nothing.
+
+How the two sides of different ages behave: a mod sends `x-idlecrash-protocol` with every call, and every reply of
+the server has `protocol`. A server that no longer serves a mod answers 426 `mod-too-old`, and the pane tells the
+player to update. A mod that needs a newer server than the one it talks to says the server is behind. Raise
+`MIN_MOD_PROTOCOL` only when you are ready to lock out the old mods.
