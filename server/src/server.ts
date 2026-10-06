@@ -2,6 +2,8 @@
 // whether Claude is working (POST /presence) and plays the table (/join, /state, /bet, /cashout, /leave).
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import pkg from '../../package.json'
+import { MIN_MOD_PROTOCOL, PROTOCOL, PROTOCOL_HEADER } from '../../shared/protocol'
 import { DEFAULTS, Game, type ActionError, type Config } from './engine'
 import { HourlyLimit, clientKey } from './limits'
 
@@ -18,6 +20,7 @@ const cfg: Config = {
 }
 
 const ACCOUNTS_PER_IP_HOUR = Number(process.env.ACCOUNTS_PER_IP_HOUR ?? 10)
+const MIN_MOD = Number(process.env.MIN_MOD_PROTOCOL ?? MIN_MOD_PROTOCOL)
 
 const ACCOUNTS_FILE = join(DATA_DIR, 'accounts.json')
 mkdirSync(DATA_DIR, { recursive: true })
@@ -88,8 +91,9 @@ const STATUS: Record<ActionError, number> = {
   poor: 400,
 }
 
-const json = (body: unknown, status = 200): Response =>
-  Response.json(body, { status, headers: { 'cache-control': 'no-store' } })
+/** Every reply says which protocol the server speaks, so a mod can tell when the server is older than it needs. */
+const json = (body: Record<string, unknown>, status = 200): Response =>
+  Response.json({ ...body, protocol: PROTOCOL }, { status, headers: { 'cache-control': 'no-store' } })
 
 const fail = (error: string, status: number): Response => json({ ok: false, error }, status)
 
@@ -113,6 +117,15 @@ function bearer(req: Request): { id: string; secret: string } | null {
 /** What needs the mod's secret. Anything else that is not public is not here. */
 const SIGNED_IN = new Set(['/presence', '/state', '/bet', '/cashout', '/leave'])
 
+/** What only the mod calls: it must be a mod this server still serves. */
+const MOD_PATHS = new Set(['/account', '/join', ...SIGNED_IN])
+
+/** The protocol a mod says it speaks. A mod from before the header, or a bad value, is 0. */
+function modProtocol(req: Request): number {
+  const n = Number(req.headers.get(PROTOCOL_HEADER) ?? 0)
+  return Number.isFinite(n) ? n : 0
+}
+
 const server = Bun.serve({
   port: PORT,
   hostname: HOST,
@@ -129,9 +142,12 @@ const server = Bun.serve({
     const now = Date.now()
     try {
       if (pathname === '/health') {
-        return json({ ok: true, tables: game.tables.size, accounts: game.accounts.size })
+        return json({ ok: true, version: pkg.version, tables: game.tables.size, accounts: game.accounts.size })
       }
       if (pathname === '/top') return json({ ok: true, top: game.leaderboard(now) })
+
+      // A mod too old for this server is told to update, in a reply it can show.
+      if (MOD_PATHS.has(pathname) && modProtocol(req) < MIN_MOD) return fail('mod-too-old', 426)
 
       const body = await readBody(req)
 

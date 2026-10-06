@@ -1,16 +1,14 @@
 name: deploy
 
-# Every push to main that changes what the server runs: test it, put it on the server, play a round on the live one.
+# Every push to main: test it; put the server on the machine if what the server runs changed, and play a round on the
+# live one; then publish the GitHub Release for the version in mod/.claude-plugin/plugin.json, if it has none yet.
+# The release comes last on purpose: a mod that people can update to must find the server it needs already live.
 # The key in DEPLOY_SSH_KEY can do one thing on the server: deploy a commit that is on main (see deploy/idlecrash-deploy).
 # Changes to deploy/ are not rolled out by this: they run with more rights, so an admin applies them with deploy/deploy.sh.
 on:
   push:
     branches: [main]
-    paths:
-      - 'server/**'
-      - 'shared/**'
-      - '.github/workflows/deploy.yml'
-  workflow_dispatch:
+  workflow_dispatch: # deploys the commit it is run on, whatever changed
 
 concurrency:
   group: deploy
@@ -29,8 +27,29 @@ jobs:
           bun-version: 1.3.12
       - run: bun test ./server ./shared
 
+  # Did this push change what the server runs? A push that only touches the mod, the docs or the changelog does not deploy.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.diff.outputs.server }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          server=true # when in doubt, deploy
+          if [ "$GITHUB_EVENT_NAME" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+            grep -qE '^(server|shared)/|^\.github/workflows/deploy\.yml$' <<<"$changed" || server=false
+          fi
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+
   deploy:
-    needs: test
+    needs: [test, changes]
+    if: needs.changes.outputs.server == 'true'
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -50,5 +69,20 @@ jobs:
           ssh -i "$RUNNER_TEMP/key" -o IdentitiesOnly=yes -o BatchMode=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" -o StrictHostKeyChecking=yes \
             "cideploy@$DEPLOY_HOST" "deploy $GITHUB_SHA"
+      # Plays a round, and checks that the live server says this commit's version and protocol.
       - name: Play a round on the live server
         run: bun server/scripts/check-remote.ts "${{ vars.PUBLIC_URL }}"
+
+  release:
+    needs: [test, deploy]
+    # Not when the tests failed or the deploy did. A deploy that was skipped (nothing the server runs changed) is fine.
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.test.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.deploy.result) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the tag and the release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release the version in plugin.json, unless it is released already
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: tools/release.sh

@@ -1,5 +1,10 @@
 // Plays one real round against a deployed server, over HTTPS, the way the mod does.
+// It also checks that the server runs the version and the protocol of the checkout this is run from: after a deploy
+// of a commit, that is how we know the commit is what is live.
 // Usage: bun scripts/check-remote.ts https://your-server.example
+import pkg from '../../package.json'
+import { PROTOCOL } from '../../shared/protocol'
+
 const base = (process.argv[2] ?? 'http://localhost:8787').replace(/\/+$/, '')
 let failed = 0
 const check = (name: string, ok: boolean, detail = ''): void => {
@@ -28,6 +33,8 @@ async function until(creds: Creds, want: (snapshot: any) => boolean, ms: number)
 
 const health = await fetch(base + '/health').then(r => r.json() as Promise<any>)
 check('health', health.ok === true)
+check(`the server runs version ${pkg.version}`, health.version === pkg.version, `it says ${health.version}`)
+check(`and speaks protocol ${PROTOCOL}`, health.protocol === PROTOCOL, `it says ${health.protocol}`)
 check('there is no page, only the API', (await fetch(base + '/')).status === 404)
 
 const made = await post('/account', { name: 'checker' })

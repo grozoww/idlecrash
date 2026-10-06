@@ -1,7 +1,8 @@
 // What the mod says to the server and when: presence, the account, commands. The session here is a terminal.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { cleanBase } from '../hooks/util'
+import { PROTOCOL } from '../hooks/shared/protocol'
+import { cleanBase, skewOf, skewText } from '../hooks/util'
 import { BASE, DONE, PANE_PROPS, START, paths, run, world } from './world'
 
 describe('a turn', () => {
@@ -105,6 +106,32 @@ describe('trouble', () => {
   })
 })
 
+describe('a server and a mod of different ages', () => {
+  test('every call carries the protocol the mod speaks', async ($, on) => {
+    const { clock, calls } = world(on)
+    await $.session.start(START)
+    await $.turn.start({ text: 'x', turnId: 't1' })
+    await clock.advance(5000)
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls.every(c => c.protocol === String(PROTOCOL))).toBe(true)
+    await $.turn.complete(DONE)
+    await clock.advance(50)
+  })
+
+  test('a server that no longer serves this mod: the pane says to update, and a toast says it once', async ($, on) => {
+    const { clock, toasts } = world(on, { oldMod: true })
+    await $.session.start(START)
+    await $.turn.start({ text: 'x', turnId: 't1' })
+    await clock.advance(8000)
+    const ui = await $.ui.mount({ plugin: 'idlecrash', surface: 'terminal', component: 'Pane', requestId: 'idlecrash', props: PANE_PROPS })
+    expect(await ui.find({ type: 'Text', text: skewText('mod-too-old', BASE) })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: `Cannot reach ${BASE}` })).toBeUndefined() // not "cannot reach": it did answer
+    expect(toasts.filter(t => t === skewText('mod-too-old', BASE))).toHaveLength(1)
+    await $.turn.complete(DONE)
+    await clock.advance(50)
+  })
+})
+
 describe('/idlecrash top', () => {
   test('prints the board with names cleaned of terminal escapes', async ($, on) => {
     world(on)
@@ -136,6 +163,19 @@ describe('a bad serverUrl', () => {
 })
 
 describe('helpers', () => {
+  test('a mod and a server that do not fit are told apart from a server that is just down', () => {
+    expect(skewOf(426, { ok: false, error: 'mod-too-old', protocol: 5 })).toBe('mod-too-old')
+    expect(skewOf(200, { ok: true, protocol: 1 }, 1)).toBeNull()
+    expect(skewOf(200, { ok: true }, 0)).toBeNull() // a server from before the protocol is 0, and 0 is enough here
+    expect(skewOf(200, { ok: true }, 1)).toBe('server-too-old')
+    expect(skewOf(200, { ok: true, protocol: 1 }, 2)).toBe('server-too-old')
+    expect(skewOf(409, { ok: false, error: 'closed', protocol: 2 }, 2)).toBeNull()
+    // The proxy's error page while the server restarts, or no reply at all, says nothing about versions.
+    expect(skewOf(502, null, 5)).toBeNull()
+    expect(skewOf(502, 'Bad Gateway', 5)).toBeNull()
+    expect(skewText('server-too-old', 'https://x.example')).toContain('https://x.example')
+  })
+
   test('the server address is checked', () => {
     expect(cleanBase('https://crash.example.com/')).toBe('https://crash.example.com')
     expect(cleanBase('http://localhost:8787')).toBe('http://localhost:8787')

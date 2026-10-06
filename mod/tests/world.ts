@@ -7,11 +7,12 @@ export const BASE = 'https://178-105-28-170.sslip.io'
 
 export type Opts = {
   down?: boolean
+  oldMod?: boolean // a server that no longer serves this mod: it answers every call with 426
   surfaces?: string[]
   isPlaced?: boolean
 }
 
-export type Call = { method: string; path: string; body: any; auth: string | null }
+export type Call = { method: string; path: string; body: any; auth: string | null; protocol: string | null }
 
 type Bet = { amount: number; auto: number | null; cash: number | null; payout: number } | null
 
@@ -68,7 +69,8 @@ export function world(on: On, opts: Opts = {}) {
     const path = new URL(e.url).pathname
     const method = e.init?.method ?? 'GET'
     const body = e.init?.body ? JSON.parse(e.init.body) : {}
-    calls.push({ method, path, body, auth: e.init?.headers?.authorization ?? null })
+    calls.push({ method, path, body, auth: e.init?.headers?.authorization ?? null, protocol: e.init?.headers?.['x-idlecrash-protocol'] ?? null })
+    if (opts.oldMod && path !== '/top') return answer({ ok: false, error: 'mod-too-old', protocol: 99 }, 426)
     const key = `${method} ${path}`
     switch (key) {
       case 'POST /account':

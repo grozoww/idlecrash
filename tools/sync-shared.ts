@@ -3,7 +3,7 @@
 // shared/sync.test.ts fails when the copies are out of date.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
-export const FILES = ['scene.ts', 'lib.ts', 'types.ts']
+export const FILES = ['scene.ts', 'lib.ts', 'types.ts', 'protocol.ts']
 export const HEADER = '// GENERATED from /shared by tools/sync-shared.ts. Edit the original, not this copy.\n'
 
 export const copyOf = (name: string): string => HEADER + readFileSync(new URL(`../shared/${name}`, import.meta.url), 'utf8')
