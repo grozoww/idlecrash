@@ -28,7 +28,8 @@ CI_B64=$(printf '%s' "$CI_LINE" | base64 | tr -d '\n')
 
 ssh_ "$TARGET" bash -s -- "$REPO_URL" "$REF" "$CI_B64" <<'REMOTE'
 set -euo pipefail
-repo_url=$1; ref=$2; ci_line=$(printf '%s' "$3" | base64 -d)
+# ${3:-}: without a CI key $3 is empty, and ssh drops an empty argument, so it is not set at all
+repo_url=$1; ref=$2; ci_line=$(printf '%s' "${3:-}" | base64 -d)
 
 # A user for CI: no sudo, except restarting the one service. It owns the code checkout.
 id cideploy >/dev/null 2>&1 || sudo useradd --create-home --shell /bin/bash cideploy
