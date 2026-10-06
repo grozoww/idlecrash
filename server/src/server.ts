@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DEFAULTS, Game, type ActionError, type Config } from './engine'
-import { HourlyLimit } from './limits'
+import { HourlyLimit, clientKey } from './limits'
 
 const PORT = Number(process.env.PORT ?? 8787)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -122,7 +122,7 @@ const server = Bun.serve({
   },
   async fetch(req, srv) {
     const forwarded = TRUST_PROXY ? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() : undefined
-    const ip = forwarded || srv.requestIP(req)?.address || 'unknown'
+    const ip = clientKey(forwarded || srv.requestIP(req)?.address || 'unknown')
     if (!isAllowed(ip)) return fail('rate-limited', 429)
 
     const { pathname } = new URL(req.url)
