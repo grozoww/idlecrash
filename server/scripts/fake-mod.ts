@@ -1,5 +1,5 @@
-// Stands in for the Claude Code mod while you work on the page: makes an account,
-// says "Claude is working" every 2 seconds, and prints the link that opens the page.
+// Stands in for the Claude Code mod while you work on the server: makes an account,
+// sits at a table and says "Claude is working" every 2 seconds.
 // Usage: bun scripts/fake-mod.ts [http://localhost:8787] [seconds of work, default forever]
 const base = process.argv[2] ?? 'http://localhost:8787'
 const workFor = Number(process.argv[3] ?? Infinity)
@@ -14,8 +14,7 @@ const call = async (creds: { id: string; secret: string } | null, path: string, 
 const made = await call(null, '/account', { name: 'Maverick' })
 const creds = made.creds
 console.log(`account ${made.name}, balance ${made.balance}`)
-const { code } = await call(creds, '/link')
-console.log(`open: ${base}/?c=${code}`)
+await call(null, '/join', { id: creds.id, secret: creds.secret })
 
 const t0 = Date.now()
 while ((Date.now() - t0) / 1000 < workFor) {
@@ -24,4 +23,4 @@ while ((Date.now() - t0) / 1000 < workFor) {
   await new Promise(r => setTimeout(r, 2000))
 }
 const done = await call(creds, '/presence', { working: false })
-console.log('Claude "finished":', JSON.stringify(done.locked ?? {}), 'balance', done.balance)
+console.log('Claude "finished": balance', done.balance)

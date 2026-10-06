@@ -1,4 +1,4 @@
-// The desktop app: the game lives in a pane of the mod, unless the `browser` setting asks for a browser. Its pictures are Svg in the plugin's tree;
+// The desktop app: the game lives in a pane of the mod. Its pictures are Svg in the plugin's tree;
 // each button is a picture with the same picture lit over it on hover (the app does that) and a Client over both that
 // catches the click: nothing in an Svg can be pressed, a button in the tree blinks at every redraw, and a native Button
 // in a Client is drawn as plain text.
@@ -40,19 +40,17 @@ async function seated($: any, on: any, opts: Parameters<typeof world>[1] = {}) {
 }
 
 describe('the desktop app', () => {
-  test('/idlecrash opens the pane, and a turn seats you in it without a browser', async ($, on) => {
-    const { clock, calls, opened, paneOpens } = world(on, { surfaces: ['desktop'] })
+  test('/idlecrash opens the pane, and a turn seats you in it', async ($, on) => {
+    const { clock, calls, paneOpens } = world(on, { surfaces: ['desktop'] })
     await $.session.start(START)
     const out = await run($)
     expect(paneOpens).toHaveLength(1)
-    expect(opened).toHaveLength(0)
     expect(out.text).toMatch(/IdleCrash is open/)
+    expect(out.text).not.toMatch(/\bb bet\b/) // the desktop pane has no keys to list
 
     await $.turn.start({ text: 'x', turnId: 't1' })
     await clock.advance(1500)
     expect(paths(calls)).toContain('POST /join')
-    expect(opened).toHaveLength(0) // the pane is the game here
-    expect((await run($, 'web')).text).toMatch(/opened in your browser/) // the browser is still one word away
   })
 
   test('the pictures are Svg in the plugin tree and every button is a picture with a click Client over it', async ($, on) => {
@@ -254,27 +252,13 @@ describe('the desktop app', () => {
     expect(JSON.stringify(await ui.drawn())).not.toContain('\u0007')
   })
 
-  test('a pane the app does not place waits for /idlecrash: no browser opens by itself on the desktop', async ($, on) => {
-    const { clock, calls, opened, toasts } = world(on, { surfaces: ['desktop'], isPlaced: false })
+  test('a pane the app does not place waits for /idlecrash, and says so once', async ($, on) => {
+    const { clock, calls, toasts } = world(on, { surfaces: ['desktop'], isPlaced: false })
     await $.session.start(START)
     await $.turn.start({ text: 'x', turnId: 't1' })
     await clock.advance(5000)
     expect(paths(calls)).not.toContain('POST /join') // no seat for a pane nobody can see
-    expect(opened).toHaveLength(0)
     expect(toasts.filter(t => /type \/idlecrash to open the game/.test(t))).toHaveLength(1) // said once
-  })
-})
-
-describe('the desktop app with the browser asked for', () => {
-  test('"system" keeps the browser: the pane there is a button that opens it', { options: { browser: 'system' } }, async ($, on) => {
-    const { opened, paneOpens } = world(on, { surfaces: ['desktop'] })
-    await $.session.start(START)
-    await run($)
-    expect(paneOpens).toHaveLength(0)
-    expect(opened).toHaveLength(1)
-    const ui = await mount($)
-    expect(await ui.find({ key: 'w-bet' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: /opens in your browser/ })).toBeDefined()
   })
 })
 

@@ -20,7 +20,7 @@ HTTPS certificate by itself. The game server listens on `127.0.0.1:8787` only, b
    data folder), clones the repo to `/opt/idlecrash/repo` and runs it from there, and sets up a daily
    backup of the accounts file (14 kept). `ci_key.pub` is optional: see "Deploy on every push" below.
 5. Check it with `bun server/scripts/check-remote.ts https://203-0-113-7.sslip.io`. It plays one round
-   over HTTPS and a secure WebSocket.
+   over HTTPS.
 6. Tell the mod to use it: `claude plugin configure idlecrash@grozoww-mods`, or set `serverUrl` in `/config`.
 
 Updating is the same command again. Accounts live in `/var/lib/idlecrash/accounts.json` and survive it.

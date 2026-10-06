@@ -445,35 +445,25 @@ describe('watching the round out', () => {
   })
 })
 
-describe('opening the page', () => {
-  test('a link code works once, and only for a while', () => {
-    const { game } = setup()
-    const { account } = game.createAccount('ann', T0)!
-    const code = game.createLink(account.id, T0)
-    expect(game.redeemLink(code, T0 + 1000)?.account).toBe(account)
-    expect(game.redeemLink(code, T0 + 2000)).toBeNull()
-    const late = game.createLink(account.id, T0)
-    expect(game.redeemLink(late, T0 + DEFAULTS.linkMs + 1)).toBeNull()
-    expect(game.redeemLink('nonsense', T0)).toBeNull()
-    expect(game.redeemLink(42, T0)).toBeNull()
-  })
-
-  test('the browser gets a key of its own: it logs in, the mod secret is not shared, and keys are only hashes', () => {
+describe('the secret', () => {
+  test('is checked against its hash, and only the hash is kept', () => {
     const { game } = setup()
     const { account, secret } = game.createAccount('ann', T0)!
-    const redeemed = game.redeemLink(game.createLink(account.id, T0), T0)!
-    expect(redeemed.secret).not.toBe(secret)
-    expect(game.authenticate(account.id, redeemed.secret)).toBe(account)
     expect(game.authenticate(account.id, secret)).toBe(account)
-    expect(JSON.stringify(game.exportAccounts())).not.toContain(redeemed.secret)
+    expect(game.authenticate(account.id, 'wrong')).toBeNull()
+    expect(game.authenticate('nobody', secret)).toBeNull()
+    expect(game.authenticate(42, secret)).toBeNull()
+    expect(JSON.stringify(game.exportAccounts())).not.toContain(secret)
   })
 
-  test('only the last five browser keys stay valid', () => {
+  test('keys that were handed to a browser, in an accounts file from the days of the page, are dropped on load', () => {
     const { game } = setup()
-    const { account } = game.createAccount('ann', T0)!
-    const keys = Array.from({ length: 7 }, () => game.redeemLink(game.createLink(account.id, T0), T0)!.secret)
-    expect(game.authenticate(account.id, keys[0])).toBeNull()
-    expect(game.authenticate(account.id, keys[6])).toBe(account)
+    const { account, secret } = game.createAccount('ann', T0)!
+    const old = { ...account, webHashes: ['abc'] }
+    const fresh = setup().game
+    fresh.importAccounts([old])
+    expect(fresh.authenticate(account.id, secret)).not.toBeNull()
+    expect(JSON.stringify(fresh.exportAccounts())).not.toContain('webHashes')
   })
 })
 

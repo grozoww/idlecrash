@@ -10,7 +10,7 @@ export type Row = {
   payout: number
 }
 
-/** What the server sends about a table. The page reads it as data, never as code. */
+/** What the server sends about a table. The mod reads it as data, never as code. */
 export type Snapshot = {
   now: number
   growth: number

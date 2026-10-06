@@ -6,13 +6,9 @@ import type { On } from 'claude-code'
 export const BASE = 'https://178-105-28-170.sslip.io'
 
 export type Opts = {
-  pageOpen?: boolean
   down?: boolean
-  exitCode?: number
   surfaces?: string[]
   isPlaced?: boolean
-  appBrowser?: boolean // the session has the app's browser panel tool
-  appBrowserFails?: boolean
 }
 
 export type Call = { method: string; path: string; body: any; auth: string | null }
@@ -25,10 +21,8 @@ export function world(on: On, opts: Opts = {}) {
 
   const calls: Call[] = []
   const state = {
-    pageOpen: opts.pageOpen ?? false,
     down: opts.down ?? false,
     accounts: 0,
-    code: 'abcDEF123xyz',
     refuse: null as string | null, // make /bet and /cashout answer with this error code
     seatKept: false, // after "Claude finished" the server keeps the seat until the round is over
     roundOver: false,
@@ -39,7 +33,6 @@ export function world(on: On, opts: Opts = {}) {
     balance: 1000,
     bet: null as Bet,
     playerName: 'me',
-    oldServer: false, // an older server settled an open bet when Claude stopped; the new one leaves it in its round
   }
 
   const snapshot = () => ({
@@ -82,12 +75,9 @@ export function world(on: On, opts: Opts = {}) {
         state.accounts += 1
         return answer({ ok: true, creds: { id: 'acct1', secret: 'secret1' }, name: 'Guest1234', balance: state.balance })
       case 'POST /presence': {
-        const locked = body.working === false ? (state.oldServer ? { cashed: 120, refunded: 0 } : { cashed: 0, refunded: 0 }) : undefined
         if (body.working === false) state.seatKept = true
-        return answer({ ok: true, pageOpen: state.pageOpen, name: 'Guest1234', balance: state.balance, locked })
+        return answer({ ok: true, name: 'Guest1234', balance: state.balance })
       }
-      case 'POST /link':
-        return answer({ ok: true, code: state.code })
       case 'GET /top':
         return answer({ ok: true, top: [{ name: '\u001b[31mEve', balance: 5000 }, { name: 'Bob', balance: 1200 }] })
       case 'POST /join':
@@ -117,11 +107,8 @@ export function world(on: On, opts: Opts = {}) {
     }
   }
 
-  const opened: string[][] = []
-  const statuses: (string | undefined)[] = []
   const toasts: string[] = []
   const paneOpens: unknown[] = []
-  const appOpens: string[] = []
   const invalidates: unknown[] = [] // redraws the plugin asked for
   on('http.fetch', handle as never)
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -129,10 +116,11 @@ export function world(on: On, opts: Opts = {}) {
   on('turn.complete', () => ({ text: '' }))
   on('command.register', () => ({ value: { command: 'idlecrash' } }))
   on('session.id', () => ({ value: 'session-A' }))
-  // An editor by default: a surface with no pane of ours, so the game plays in the browser. The terminal and the desktop app have panes.
-  on('session.surfaces', () => ({ value: opts.surfaces ?? ['vscode'] }) as never)
+  // A terminal by default. The desktop app has a pane of ours too; an editor or a phone has none.
+  on('session.surfaces', () => ({ value: opts.surfaces ?? ['terminal'] }) as never)
+  // The pane is listed once the mod has opened it.
   on('ui.panes', () => ({
-    value: [{ id: 'idlecrash', title: 'IdleCrash', isShown: true, isFocused: false, isPlaced: opts.isPlaced ?? true }],
+    value: paneOpens.length > 0 ? [{ id: 'idlecrash', title: 'IdleCrash', isShown: true, isFocused: false, isPlaced: opts.isPlaced ?? true }] : [],
   }))
   on('ui.open', (_$, e) => {
     paneOpens.push(e)
@@ -143,30 +131,12 @@ export function world(on: On, opts: Opts = {}) {
     return { value: undefined } as never
   })
   on('ui.log', () => ({ value: undefined }))
-  on('process.run', (_$, e) => {
-    opened.push([...(e as { argv: string[] }).argv])
-    return { value: { exitCode: opts.exitCode ?? 0, stdout: '', stderr: '' } } as never
-  })
-  on('tool.list', () => ({
-    value: opts.appBrowser
-      ? [{ name: 'mcp__Claude_Browser__preview_start', description: 'Open the browser pane', mcp: true }]
-      : [],
-  }) as never)
-  on('tool.call', (_$, e) => {
-    const call = e as unknown as { tool: string; url?: string }
-    appOpens.push(`${call.tool} ${call.url ?? ''}`.trim())
-    return (opts.appBrowserFails ? { deny: 'not allowed' } : { result: {}, text: 'Browser pane opened.' }) as never
-  })
-  on('ui.status', (_$, e) => {
-    statuses.push((e as { text?: string }).text)
-    return { value: undefined } as never
-  })
   on('ui.toast', (_$, e) => {
     toasts.push((e as { text: string }).text)
     return { value: undefined } as never
   })
 
-  return { clock, calls, state, opened, statuses, toasts, paneOpens, appOpens, invalidates }
+  return { clock, calls, state, toasts, paneOpens, invalidates }
 }
 
 export const START = { cwd: '/tmp', surface: 'terminal', isInteractive: true } as const

@@ -7,9 +7,11 @@
   up under the pointer. All of it scales with the pane. The pane stays put when a bet is placed or a turn ends.
 - The desktop app sends typed keys to the chat, so a pane there has no keyboard: use the mouse. While the mouse
   button is held down the app pauses the whole side panel; it catches up when you let go.
-- The old behavior is a setting away: `browser` = `app` (the app's browser panel) or `system` (your default
-  browser). A desktop app that does not open the pane by itself waits for `/idlecrash`; it no longer opens a
-  browser instead. `/idlecrash web` still opens the browser.
+- **The browser version is gone.** The server no longer serves a page or a WebSocket, and `/link` is gone;
+  the mod no longer opens a browser, so `/idlecrash web`, `/idlecrash link` and the setting `browser` are gone.
+  It plays only in a terminal and in the desktop app, and does nothing in an editor or on a phone. A pane that
+  the app does not place by itself waits for `/idlecrash`. The mod runs no program on your machine any more.
+  Mods older than 0.3.0 open the page, so they stop working once the new server is deployed: update the mod.
 - When Claude stops, an open bet is no longer cashed out for you. New bets stay locked, but the bet stays in its
   round and you can still cash out, in the terminal pane, the desktop pane and on the page, until the plane
   crashes; an auto cash-out still pays, and a bet left alone at the crash is lost. This is a rule of the server,

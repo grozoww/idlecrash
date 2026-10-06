@@ -15,7 +15,6 @@ const PANE = 'idlecrash'
 const DEFAULT_BASE = 'http://localhost:8787'
 const BEAT_MS = 2000
 const PAINT_MS = 125 // the desktop pane's picture is redrawn this often: `ui.invalidate` allows ten a second
-const AUTO_OPEN_EVERY_MS = 30 * 60_000
 
 const feed = atom({ plugin: 'idlecrash', key: 'feed' } as const, { snap: null, offset: 0 } as Feed)
 const local = atom({ plugin: 'idlecrash', key: 'local' } as const, { stake: 50, auto: 2, isRebet: false } as Local)
@@ -47,7 +46,6 @@ let base = DEFAULT_BASE
 let isBaseValid = true
 let nickOption = ''
 let isAutoOpenOption = true
-let browserMode: 'auto' | 'app' | 'system' = 'auto'
 let timer: { cancel: () => void } | null = null
 let paintTimer: { cancel: () => void } | null = null // redraws the desktop pane for its moving picture
 let creds: { id: string; secret: string } | null = null
@@ -63,11 +61,6 @@ let isActing = false // a bet or cash-out is in flight
 let beatTimer: { cancel: () => void } | null = null // tells the server Claude is working
 let sessionId = 'default'
 let isWorking = false
-let hasPane = true // the game lives in a pane of this mod: on a terminal and in the desktop app
-let isTerminal = true // a terminal window too narrow for the pane plays in the browser; the desktop app waits for /idlecrash
-let isPaneUnplaced = false // the pane is open but the window is too narrow to show it
-let beatFailures = 0
-let lastAutoOpen = -Infinity
 let startBalance: number | null = null
 let watchUntil = 0 // the pane stops watching a round that has not ended by then
 let lastBalance: number | null = null
@@ -273,7 +266,6 @@ async function tick($: EngineInterface): Promise<void> {
     const st = await read($, status)
     if (!st.isWorking && !st.isWatching) return
     const pane = (await $.ui.panes()).find(p => p.id === PANE)
-    isPaneUnplaced = !!pane && !pane.isPlaced
     if (!pane || !pane.isPlaced) {
       if (st.isWatching) await endWatching($)
       else if (st.isJoined) await leave($)
@@ -308,7 +300,7 @@ async function tick($: EngineInterface): Promise<void> {
   }
 }
 
-// ---- the account, the browser, and "Claude is working" -----------------------------
+// ---- the account and "Claude is working" --------------------------------------------
 
 /** Finds the player's account, or makes one the first time. The secret stays in this plugin's store. */
 async function ensureAccount($: EngineInterface): Promise<boolean> {
@@ -326,81 +318,10 @@ async function ensureAccount($: EngineInterface): Promise<boolean> {
   return true
 }
 
-/** Opens the address in the app's own browser panel. Null when it opened; else why it did not. */
-async function openInApp($: EngineInterface, url: string): Promise<string | null> {
-  try {
-    const tool = (await $.tool.list()).find(t => t.mcp && /Claude_Browser__preview_start$/.test(t.name))
-    if (!tool) return 'this session has no browser-panel tool'
-    // The same call the model would make, so the usual permission check applies.
-    const res = (await $.tool.call({ tool: tool.name, url } as never)) as { deny?: string; isError?: boolean }
-    if (res.deny !== undefined) return `the call was refused (${String(res.deny).slice(0, 80)})`
-    return res.isError === true ? 'the panel reported an error' : null
-  } catch (err) {
-    return `error: ${(err instanceof Error ? err.message : String(err)).slice(0, 80)}`
-  }
-}
-
-/**
- * Opens the game page with a one-time code in the address, so the browser gets a key of
- * its own and never sees this plugin's secret. It goes to the app's browser panel when
- * there is one, else to the default browser. Returns the address, whether something
- * opened it, and where.
- */
-async function openPage(
-  $: EngineInterface,
-): Promise<{ url: string; isOpened: boolean; via: 'app' | 'system' | null; appWhy: string | null } | null> {
-  const link = await api($, 'POST', '/link', {})
-  const code = link.json?.code
-  if (!link.json?.ok || typeof code !== 'string' || !/^[\w-]{6,40}$/.test(code)) return null
-  const url = `${base}/?c=${code}`
-  let appWhy: string | null = null
-  if (browserMode !== 'system') {
-    appWhy = await openInApp($, url)
-    if (appWhy === null) return { url, isOpened: true, via: 'app', appWhy }
-  }
-  if (browserMode === 'app') return { url, isOpened: false, via: null, appWhy }
-  for (const argv of [['open', url], ['xdg-open', url], ['cmd', '/c', 'start', '', url]]) {
-    try {
-      const run = await $.process.run(argv, { timeoutMs: 8000 })
-      if (run.exitCode === 0) return { url, isOpened: true, via: 'system', appWhy }
-    } catch {
-      // That program is not here; try the next one.
-    }
-  }
-  return { url, isOpened: false, via: null, appWhy }
-}
-
-async function openInBrowser($: EngineInterface): Promise<string> {
-  try {
-    if (!(await ensureAccount($))) return `IdleCrash: the server at ${base} did not accept the account.`
-    const page = await openPage($)
-    if (!page) return 'IdleCrash: the server gave no link.'
-    // Say why the panel was skipped, or a fallback to another browser looks like a bug.
-    const skipped = page.appWhy ? ` (The app's browser panel was not used: ${page.appWhy}.)` : ''
-    if (!page.isOpened) return `IdleCrash: could not open a browser${skipped} Open ${page.url}`
-    return `IdleCrash opened in ${page.via === 'app' ? "the app's browser panel" : 'your browser'}. Betting is open while Claude works.${skipped}`
-  } catch {
-    return `IdleCrash: cannot reach ${base}. Is the server running?`
-  }
-}
-
-async function openFromPane($: EngineInterface): Promise<void> {
-  $.ui.toast(await openInBrowser($), { timeoutMs: 8000 })
-}
-
-async function maybeAutoOpen($: EngineInterface): Promise<void> {
-  const wants = ((await $.store.get('autoOpen')) ?? isAutoOpenOption) !== false
-  const now = await $.clock.now()
-  if (!wants || now - lastAutoOpen < AUTO_OPEN_EVERY_MS) return
-  lastAutoOpen = now
-  const page = await openPage($)
-  if (page && !page.isOpened) $.ui.toast(`IdleCrash: open ${page.url}`, { timeoutMs: 15_000 })
-}
-
-/** The terminal always plays in its pane. The desktop app does unless `browser` says app or system. */
-async function playsInPane($: EngineInterface): Promise<boolean> {
+/** The terminal and the desktop app have a pane of ours. An editor or a phone has none, and the game does not play there. */
+async function hasPaneHere($: EngineInterface): Promise<boolean> {
   const surfaces = await $.session.surfaces()
-  return surfaces.includes('terminal') || (browserMode === 'auto' && surfaces.includes('desktop'))
+  return surfaces.includes('terminal') || surfaces.includes('desktop')
 }
 
 /** Every 2 seconds while a turn runs. The server opens betting on this and locks it when it stops. */
@@ -415,42 +336,29 @@ async function beat($: EngineInterface): Promise<void> {
       throw new Error('unauthorized')
     }
     if (!reply.json?.ok) throw new Error('refused')
-    beatFailures = 0
     const balance = Number(reply.json.balance) || 0
     startBalance ??= balance
     lastBalance = balance
-    const isPageOpen = reply.json.pageOpen === true
-    // The terminal plays in its pane. Everywhere else, and when the pane has no room, in the browser.
-    if (!isPageOpen && (!hasPane || (isPaneUnplaced && isTerminal))) await maybeAutoOpen($)
-    if (!hasPane) {
-      $.ui.status(
-        `IdleCrash: ${isPageOpen ? 'playing in your browser' : 'page closed, /idlecrash opens it'} · balance ${fmt(balance)} (${sign(balance - startBalance)})`,
-      )
-    }
   } catch {
-    beatFailures += 1
-    if (beatFailures === 2 && !hasPane) $.ui.status(`IdleCrash: cannot reach ${base}`)
+    // The server did not answer: the next beat tries again, and the pane says when it cannot reach it.
   }
 }
 
 // ---- the turn ------------------------------------------------------------------------
 
 async function begin($: EngineInterface): Promise<void> {
+  if (!(await hasPaneHere($))) return // an editor or a phone: there is nothing to play on
   isMuted = false
   toldNarrow = false
   failures = 0
-  beatFailures = 0
   notedKey = ''
   rebetRound = -1
   lastSignature = ''
   samples.length = 0
   startBalance = null
   isWorking = true
-  isPaneUnplaced = false
   sessionId = await $.session.id()
   const surfaces = await $.session.surfaces()
-  hasPane = await playsInPane($)
-  isTerminal = surfaces.includes('terminal')
   await update($, status, () => ({
     isWorking: true,
     isJoined: false,
@@ -468,24 +376,17 @@ async function begin($: EngineInterface): Promise<void> {
     void beat($)
   })
   await beat($)
-  if (!hasPane) {
-    $.ui.status('IdleCrash: connecting…')
-    return
-  }
   const wantsOpen = ((await $.store.get('autoOpen')) ?? isAutoOpenOption) !== false
   const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
   if (wantsOpen || isOpen) {
     const opened = await $.ui.open({ id: PANE, title: 'IdleCrash' })
-    if (!opened.isPlaced) {
-      isPaneUnplaced = true
-      if (!toldNarrow) {
-        toldNarrow = true
-        $.ui.toast(
-          isTerminal
-            ? 'IdleCrash: the window is narrower than 144 columns, so the game opens in your browser'
-            : 'IdleCrash: type /idlecrash to open the game',
-        )
-      }
+    if (!opened.isPlaced && !toldNarrow) {
+      toldNarrow = true
+      $.ui.toast(
+        surfaces.includes('terminal')
+          ? 'IdleCrash: the window is narrower than 144 columns: type /idlecrash to open the game'
+          : 'IdleCrash: type /idlecrash to open the game',
+      )
     }
   }
   timer?.cancel()
@@ -495,7 +396,7 @@ async function begin($: EngineInterface): Promise<void> {
   // The desktop pane's picture is an Svg the plugin redraws; the terminal's is a Client that moves on its own.
   paintTimer?.cancel()
   paintTimer =
-    browserMode === 'auto' && surfaces.includes('desktop')
+    surfaces.includes('desktop')
       ? $.clock.every(PAINT_MS, () => {
           $.ui.invalidate('ui.render')
         })
@@ -510,8 +411,7 @@ async function finish($: EngineInterface): Promise<void> {
     return
   }
   isWorking = false
-  // Stopping the heartbeat locks new bets. An open bet stays in its round and can still be cashed out; an older
-  // server settled it at this moment instead (cashed out, or refunded), and says so in the reply.
+  // Stopping the heartbeat locks new bets. An open bet stays in its round and can still be cashed out.
   let text = 'Claude finished, betting is locked.'
   try {
     const reply = await api($, 'POST', '/presence', { working: false, session: sessionId })
@@ -520,27 +420,16 @@ async function finish($: EngineInterface): Promise<void> {
       text += ` Balance ${fmt(balance)}`
       if (startBalance !== null) text += ` (${sign(balance - startBalance)} this turn)`
       text += '.'
-      const cashed = Number(reply.json.locked?.cashed) || 0
-      const refunded = Number(reply.json.locked?.refunded) || 0
-      if (cashed > 0) text += ` Your open bet was cashed out for you (+${fmt(cashed)}).`
-      if (refunded > 0) text += ` Your open bet was refunded (${fmt(refunded)}).`
     }
   } catch {
     // The server did not answer: it locks by itself when the beats stop.
   }
-  // On a terminal the pane stays and keeps showing this round to its end; the server holds the seat for it.
-  const wasSeated = (await read($, status)).isJoined
-  const isWatching = hasPane && wasSeated
+  // The pane stays and keeps showing this round to its end; the server holds the seat for it.
+  const isWatching = (await read($, status)).isJoined
   if (isWatching) watchUntil = (await $.clock.now()) + 120_000
   else stopTimers()
   await update($, status, s => ({ ...s, isWorking: false, isWatching, isJoined: isWatching, summary: text, note: null }))
   $.ui.toast(text, { timeoutMs: 6000 })
-  if (!hasPane) {
-    $.ui.status(`IdleCrash: ${text}`)
-    $.clock.after(20_000, () => {
-      if (!isWorking) $.ui.status(undefined)
-    })
-  }
 }
 
 export const register: Register = (on, options) => {
@@ -549,7 +438,6 @@ export const register: Register = (on, options) => {
   base = clean ?? DEFAULT_BASE
   nickOption = String(options.nickname ?? '')
   isAutoOpenOption = options.autoOpen !== false
-  browserMode = options.browser === 'app' || options.browser === 'system' ? options.browser : 'auto'
 
   // ---- hooks ----------------------------------------------------------------
 
@@ -557,7 +445,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'idlecrash',
       description: 'IdleCrash: bet fake tokens while Claude works',
-      argumentHint: '[web|link|on|off|name <nick>|top]',
+      argumentHint: '[on|off|name <nick>|top]',
       immediate: true,
     })
     await update($, status, () => ({
@@ -637,34 +525,23 @@ export const register: Register = (on, options) => {
         return {
           text: [
             'IdleCrash: bet fake tokens while Claude works.',
-            '/idlecrash          open the game (in the pane on a terminal, in the browser elsewhere)',
-            '/idlecrash web      open it in a browser (the app\'s panel when there is one)',
-            '/idlecrash link     print the browser address instead',
+            '/idlecrash          open the game (a pane, in a terminal or in the desktop app)',
             '/idlecrash on|off  open it by itself when Claude starts working, or not',
             '/idlecrash name <nick>   /idlecrash top',
-            'Keys in the pane (click it or ctrl+x tab first): b bet, c cash out, 1-4 stake, x auto cash-out, r rebet.',
+            'Terminal, keys in the pane (click it or ctrl+x tab first): b bet, c cash out, 1-4 stake, x auto cash-out, r rebet.',
+            'Desktop app: click the buttons.',
           ].join('\n'),
         }
-      case 'link': {
-        try {
-          if (!(await ensureAccount($))) return { text: `IdleCrash: the server at ${base} did not accept the account.` }
-          const link = await api($, 'POST', '/link', {})
-          return { text: link.json?.code ? `${base}/?c=${link.json.code}  (works once, for 2 minutes)` : 'IdleCrash: no link.' }
-        } catch {
-          return { text: `IdleCrash: cannot reach ${base}. Is the server running?` }
-        }
-      }
-      case 'web':
-        return { text: await openInBrowser($) }
       default: {
-        if (!(await playsInPane($))) return { text: await openInBrowser($) }
+        if (!(await hasPaneHere($))) return { text: 'IdleCrash plays in a terminal or in the desktop app: this window has no pane for it.' }
         isMuted = false
         const opened = await $.ui.open({ id: PANE, title: 'IdleCrash', focus: true })
         const st = await read($, status)
-        if (!opened.isPlaced) return { text: `IdleCrash: the window is too narrow for the pane. ${await openInBrowser($)}` }
+        if (!opened.isPlaced) return { text: 'IdleCrash: the window is too narrow for the pane.' }
+        const keys = (await $.session.surfaces()).includes('terminal') ? ' b bet, c cash out, 1-4 stake, x auto, r rebet.' : ''
         return {
           text: st.isWorking
-            ? 'IdleCrash is open. b bet, c cash out, 1-4 stake, x auto, r rebet.'
+            ? `IdleCrash is open.${keys || ' Click the buttons.'}`
             : 'IdleCrash is open. You can play while Claude is working.',
         }
       }
@@ -712,7 +589,7 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    if (e.surface === 'desktop' && browserMode === 'auto') {
+    if (e.surface === 'desktop') {
       // The pictures are Svg in this tree and are redrawn many times a second, so nothing that is pressed lives
       // here: a button in this tree would blink at every redraw. Each button is a Client, redrawn on change.
       const { Client, Svg } = $.ui.resolve(e)
@@ -767,16 +644,7 @@ export const register: Register = (on, options) => {
       )
     }
 
-    if (e.surface !== 'terminal') {
-      return (
-        <Box flexDirection="column">
-          {title}
-          <Text>The game opens in your browser.</Text>
-          <Text dimColor>{st.isWorking ? 'Claude is working: bets are open.' : 'Bets open when Claude starts working.'}</Text>
-          <Button key="web" label="o · Open the game" hotkey="o" variant="primary" onPress={() => openFromPane($)} />
-        </Box>
-      )
-    }
+    if (e.surface !== 'terminal') return <Text>IdleCrash plays in a terminal or in the desktop app.</Text>
 
     if (!st.isWorking && !st.isWatching && st.summary) {
       return (
