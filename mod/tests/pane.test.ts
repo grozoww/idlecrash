@@ -1,21 +1,21 @@
 // The terminal side: the game lives in a pane, drawn by a Client that animates on its own.
 import { describe, expect, test } from 'claude-code/testing'
 
-import { BASE, DONE, PANE_PROPS, START, paths, run, world } from './world'
+import { DONE, PANE_PROPS, START, paths, run, world } from './world'
 
 const mount = ($: any, surface: 'terminal' | 'desktop' | 'vscode' | 'mobile' = 'terminal') =>
   $.ui.mount({ plugin: 'idlecrash', surface, component: 'Pane', requestId: 'idlecrash', props: PANE_PROPS })
 
 describe('a turn on a terminal', () => {
   test('seats you, bets, cashes out, and locks when the turn ends', async ($, on) => {
-    const { clock, calls, state, opened } = world(on, { surfaces: ['terminal'] })
+    const { clock, calls, state, paneOpens } = world(on, { surfaces: ['terminal'] })
     await $.session.start(START)
     await $.turn.start({ text: 'build it', turnId: 't1' })
     await clock.advance(1500)
     expect(paths(calls)).toContain('POST /presence') // betting opens only while Claude works
     expect(paths(calls)).toContain('POST /join')
     expect(paths(calls)).toContain('GET /state')
-    expect(opened).toHaveLength(0) // the pane is the game here: no browser
+    expect(paneOpens).toHaveLength(1) // the pane is the game here, and it opened by itself
 
     const ui = await mount($)
     expect(await ui.find({ type: 'Text', text: /BETS OPEN/, in: 'scene' })).toBeDefined()
@@ -77,6 +77,30 @@ describe('a turn on a terminal', () => {
     expect(calls.length).toBe(done) // all quiet
   })
 
+  test('after Claude stops, an open bet can still be cashed out while the plane flies', async ($, on) => {
+    const { clock, calls, state } = world(on, { surfaces: ['terminal'] })
+    await $.session.start(START)
+    await $.turn.start({ text: 'x', turnId: 't1' })
+    await clock.advance(1500)
+    const ui = await mount($)
+    await ui.press({ key: 'bet' })
+    state.phase = 'running'
+    state.phaseStart = clock.now() - 8000 - 2000
+    await clock.advance(500)
+
+    await $.turn.complete(DONE)
+    await clock.advance(1500)
+    expect(await ui.find({ type: 'Text', text: /Your bet is still in/ })).toBeDefined() // it says so
+    expect(await ui.find({ key: 'bet' })).toBeUndefined() // nothing new can be bet
+    expect(await ui.find({ key: 'auto' })).toBeUndefined()
+    expect(await ui.find({ key: 'cash' })).toBeDefined() // but the bet can be taken
+    await ui.press({ key: 'cash' })
+    expect(paths(calls)).toContain('POST /cashout')
+    expect(state.balance).toBe(1050)
+    expect(await ui.find({ type: 'Text', text: /cashed out 2\.00x: paid 100/ })).toBeDefined()
+    expect(await ui.find({ key: 'cash' })).toBeUndefined() // and it is gone once it is taken
+  })
+
   test('a round that never ends is not watched for ever', async ($, on) => {
     const { clock, calls } = world(on, { surfaces: ['terminal'] })
     await $.session.start(START)
@@ -113,14 +137,13 @@ describe('a turn on a terminal', () => {
     expect(calls.some(c => c.body.working === false)).toBe(false)
   })
 
-  test('a window too narrow for the pane plays in the browser instead', async ($, on) => {
-    const { clock, calls, opened, toasts } = world(on, { surfaces: ['terminal'], isPlaced: false })
+  test('a window too narrow for the pane waits for /idlecrash, and says so once', async ($, on) => {
+    const { clock, calls, toasts } = world(on, { surfaces: ['terminal'], isPlaced: false })
     await $.session.start(START)
     await $.turn.start({ text: 'x', turnId: 't1' })
     await clock.advance(5000)
     expect(paths(calls)).not.toContain('POST /join') // no seat for a pane nobody can see
-    expect(opened).toEqual([['open', `${BASE}/?c=abcDEF123xyz`]])
-    expect(toasts.some(t => /narrower than 144/.test(t))).toBe(true)
+    expect(toasts.filter(t => /narrower than 144 columns: type \/idlecrash/.test(t))).toHaveLength(1)
   })
 })
 
@@ -193,47 +216,30 @@ describe('what the pane shows', () => {
     expect(JSON.stringify(await ui.drawn())).not.toContain('\u0007')
   })
 
-  test('the terminal gets the game; every other surface gets a button that opens the browser', async ($, on) => {
-    const { clock, opened } = world(on, { surfaces: ['terminal'] })
+  test('the terminal gets the game; an editor and a phone get a line that says where it plays', async ($, on) => {
+    const { clock } = world(on, { surfaces: ['terminal'] })
     await $.session.start(START)
     await $.turn.start({ text: 'x', turnId: 't1' })
     await clock.advance(1500)
     const terminal = await mount($, 'terminal')
     expect(await terminal.find({ key: 'bet' })).toBeDefined()
     await terminal.unmount()
-    for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+    for (const surface of ['vscode', 'mobile'] as const) {
       const ui = await mount($, surface)
       expect(await ui.find({ key: 'bet' })).toBeUndefined()
-      expect(await ui.find({ type: 'Text', text: /opens in your browser/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /plays in a terminal or in the desktop app/ })).toBeDefined()
       await ui.unmount()
     }
-    const desktop = await mount($, 'desktop')
-    await desktop.press({ key: 'web' })
-    await clock.advance(50)
-    expect(opened).toEqual([['open', `${BASE}/?c=abcDEF123xyz`]])
   })
 })
 
 describe('commands on a terminal', () => {
-  test('/idlecrash opens the pane; /idlecrash web opens the browser', async ($, on) => {
-    const { opened, paneOpens } = world(on, { surfaces: ['terminal'] })
+  test('/idlecrash opens the pane and says which keys work', async ($, on) => {
+    const { paneOpens } = world(on, { surfaces: ['terminal'] })
     await $.session.start(START)
     const out = await run($)
     expect(paneOpens).toHaveLength(1)
-    expect(opened).toHaveLength(0)
     expect(out.text).toMatch(/IdleCrash is open/)
-    const web = await run($, 'web')
-    expect(opened).toHaveLength(1)
-    expect(web.text).toMatch(/opened in your browser/)
-  })
-})
-
-describe('on the desktop app', () => {
-  test('/idlecrash opens the browser, not a pane', async ($, on) => {
-    const { opened, paneOpens } = world(on, { surfaces: ['desktop'] })
-    await $.session.start(START)
-    await run($)
-    expect(opened).toHaveLength(1)
-    expect(paneOpens).toHaveLength(0)
+    expect((await run($, 'help')).text).not.toMatch(/browser/i) // there is no browser version any more
   })
 })

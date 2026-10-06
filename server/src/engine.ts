@@ -18,7 +18,6 @@ export type Config = {
   refillEveryMs: number
   idleKickMs: number // no poll for this long = player left
   presenceMs: number // the mod's heartbeat: no beat for this long = Claude is not working
-  linkMs: number // how long a link code to open the page stays valid
   emptyTableMs: number
   maxMultiplier: number
   maxAccounts: number // no new accounts beyond this many
@@ -40,7 +39,6 @@ export const DEFAULTS: Config = {
   refillEveryMs: 10 * 60_000,
   idleKickMs: 20_000,
   presenceMs: 8000,
-  linkMs: 120_000,
   emptyTableMs: 30_000,
   maxMultiplier: 1000,
   maxAccounts: 100_000,
@@ -97,8 +95,6 @@ export function sanitizeName(raw: unknown): string {
 export type Account = {
   id: string
   secretHash: string
-  /** Hashes of keys handed to browsers, so the mod's own secret never leaves it. */
-  webHashes?: string[]
   name: string
   balance: number
   createdAt: number
@@ -120,7 +116,7 @@ export type Seat = {
   bet: Bet | null
   lastSeen: number
   showAt: number // bots: ms into the betting phase when their bet appears
-  /** Set when Claude stopped working: the player watches this round out, then leaves the table. */
+  /** Set when Claude stopped working: the player watches this round out (and can still cash out), then leaves the table. */
   watchedRound?: number
 }
 
@@ -207,7 +203,6 @@ export class Game {
   private botSeq = 0
   /** Account id -> session id -> when that session's last heartbeat stops counting. Not kept on disk. */
   private workingUntil = new Map<string, Map<string, number>>()
-  private links = new Map<string, { accountId: string; until: number }>()
 
   constructor(
     readonly cfg: Config = DEFAULTS,
@@ -240,20 +235,18 @@ export class Game {
     const account = this.accounts.get(id)
     if (!account) return null
     const given = Buffer.from(hashSecret(secret))
-    for (const hash of [account.secretHash, ...(account.webHashes ?? [])]) {
-      const stored = Buffer.from(hash)
-      if (given.length === stored.length && timingSafeEqual(given, stored)) return account
-    }
-    return null
+    const stored = Buffer.from(account.secretHash)
+    return given.length === stored.length && timingSafeEqual(given, stored) ? account : null
   }
 
   // -- Claude is working --
 
   /**
    * A Claude Code session says whether it is working. Betting is open while any
-   * session of the account is. When the last one stops, an open bet is settled
-   * the way leaving does: cashed out if the plane is still flying, refunded if
-   * betting is still open.
+   * session of the account is. When the last one stops, new bets are locked, but
+   * an open bet stays in its round: the player watches the round out and can
+   * still cash out, or the auto cash-out takes it. If the plane crashes first,
+   * the stake is lost.
    */
   setWorking(
     accountId: string,
@@ -278,29 +271,6 @@ export class Game {
   isWorking(accountId: string, now: number): boolean {
     for (const until of this.workingUntil.get(accountId)?.values() ?? []) if (until > now) return true
     return false
-  }
-
-  // -- opening the page --
-
-  /** A one-time code the mod puts in the page's URL. */
-  createLink(accountId: string, now: number): string {
-    const code = randomBytes(9).toString('base64url')
-    this.links.set(code, { accountId, until: now + this.cfg.linkMs })
-    return code
-  }
-
-  /** Trades a code for a key of the browser's own. The code works once. */
-  redeemLink(code: unknown, now: number): { account: Account; secret: string } | null {
-    if (typeof code !== 'string') return null
-    const link = this.links.get(code)
-    this.links.delete(code)
-    if (!link || link.until <= now) return null
-    const account = this.accounts.get(link.accountId)
-    if (!account) return null
-    const secret = randomBytes(16).toString('hex')
-    account.webHashes = [...(account.webHashes ?? []), hashSecret(secret)].slice(-5)
-    this.isDirty = true
-    return { account, secret }
   }
 
   rename(account: Account, name: string): void {
@@ -378,18 +348,18 @@ export class Game {
   }
 
   /**
-   * Claude stopped working. The open bet is settled now, as in `leave`, but the seat stays so the
-   * player can watch this round to its end. They cannot bet (`locked`), and the seat is dropped when
-   * the next round starts.
+   * Claude stopped working. The seat stays so the player can watch this round to its end, with the
+   * open bet in it: they can still cash out (`cashout` never needs Claude), but cannot bet (`locked`).
+   * Nothing is settled here, so nothing is refunded or cashed; the seat is dropped when the next
+   * round starts, and a bet that was not cashed out by the crash is lost.
    */
   private stopPlaying(accountId: string, now: number): { refunded: number; cashed: number } {
     const table = this.tableOf(accountId)
     const seat = table?.humans.get(accountId)
     if (!table || !seat) return { refunded: 0, cashed: 0 }
     this.advance(table, now)
-    const out = this.settleOpenBet(table, seat, now)
     seat.watchedRound = table.round
-    return out
+    return { refunded: 0, cashed: 0 }
   }
 
   private settleOpenBet(table: Table, seat: Seat, now: number): { refunded: number; cashed: number } {
@@ -474,7 +444,6 @@ export class Game {
         this.stopPlaying(id, now)
       }
     }
-    for (const [code, link] of this.links) if (link.until <= now) this.links.delete(code)
     for (const table of [...this.tables.values()]) {
       for (const seat of [...table.humans.values()]) {
         if (now - seat.lastSeen > this.cfg.idleKickMs) this.leave(seat.id, now)
@@ -666,7 +635,10 @@ export class Game {
 
   importAccounts(list: Account[]): void {
     for (const a of list) {
-      if (a && typeof a.id === 'string' && typeof a.secretHash === 'string') this.accounts.set(a.id, a)
+      if (a && typeof a.id === 'string' && typeof a.secretHash === 'string') {
+        delete (a as { webHashes?: unknown }).webHashes // keys that were handed to a browser: there is no page any more
+        this.accounts.set(a.id, a)
+      }
     }
   }
 }

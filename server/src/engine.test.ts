@@ -267,7 +267,7 @@ describe('Claude is working', () => {
     expect(game.bet(account.id, 50, null, T0).ok).toBe(true)
   })
 
-  test('no heartbeat for a while: locked, and an open bet is refunded', () => {
+  test('no heartbeat for a while: locked for new bets, and an open bet stays in its round', () => {
     const { game } = setup(realPresence)
     const { account } = game.createAccount('ann', T0)!
     game.setWorking(account.id, true, T0)
@@ -276,7 +276,7 @@ describe('Claude is working', () => {
     game.touch(account, T0 + 5000)
     game.tick(T0 + DEFAULTS.presenceMs + 1)
     expect(game.isWorking(account.id, T0 + DEFAULTS.presenceMs + 1)).toBe(false)
-    expect(account.balance).toBe(1000) // refunded
+    expect(account.balance).toBe(950) // the bet stands: it is not refunded
     // the seat stays to watch the round out, and nothing can be bet from it
     expect(game.snapshot(account.id, T0 + DEFAULTS.presenceMs + 1)).not.toBeNull()
     expect(game.bet(account.id, 50, null, T0 + DEFAULTS.presenceMs + 2)).toEqual({ ok: false, error: 'locked' })
@@ -290,14 +290,28 @@ describe('Claude is working', () => {
     expect(game.isWorking(account.id, T0 + 12_000)).toBe(true)
   })
 
-  test('when the turn ends mid-flight the open bet is cashed out at the current multiplier', () => {
+  test('when the turn ends mid-flight the open bet stays, and can be cashed out at the multiplier of the moment', () => {
     const { game, join } = setup({}, () => crashAt(20))
     const a = join('ann')
     game.bet(a.id, 100, null, T0 + 10)
     const out = game.setWorking(a.id, false, T0 + 8000 + 4000)
-    expect(out?.cashed).toBe(payoutFor(100, multiplierAt(4000, 0.12)))
-    expect(a.balance).toBe(900 + out!.cashed)
-    expect(game.bet(a.id, 50, null, T0 + 20_000)).toEqual({ ok: false, error: 'locked' })
+    expect(out).toEqual({ refunded: 0, cashed: 0 }) // nothing was settled for the player
+    expect(a.balance).toBe(900)
+    expect(game.bet(a.id, 50, null, T0 + 8000 + 4500)).toEqual({ ok: false, error: 'locked' })
+
+    const cashed = game.cashout(a.id, T0 + 8000 + 6000)
+    expect(cashed).toMatchObject({ ok: true, payout: payoutFor(100, multiplierAt(6000, 0.12)) })
+    expect(a.balance).toBe(900 + payoutFor(100, multiplierAt(6000, 0.12)))
+  })
+
+  test('a bet that is still open at the crash after Claude stopped is lost', () => {
+    const { game, join } = setup({}, () => crashAt(2))
+    const a = join('ann')
+    game.bet(a.id, 100, null, T0 + 10)
+    game.setWorking(a.id, false, T0 + 8000 + 500)
+    const crashed = T0 + 8000 + 6500 // the plane went at 2.00x, 5.8 s into the flight, and the table shows the crash for 4 s more
+    expect(game.cashout(a.id, crashed)).toEqual({ ok: false, error: 'too-late' })
+    expect(a.balance).toBe(900) // the stake is lost
   })
 
   test('two sessions: one finishing does not lock the other', () => {
@@ -311,7 +325,8 @@ describe('Claude is working', () => {
     expect(game.isWorking(account.id, T0 + 600)).toBe(true)
     expect(account.balance).toBe(950) // the bet stands
     const out = game.setWorking(account.id, false, T0 + 700, 'b')
-    expect(out?.refunded).toBe(50)
+    expect(out).toEqual({ refunded: 0, cashed: 0 }) // the bet is still in: it is not refunded
+    expect(account.balance).toBe(950)
     expect(game.isWorking(account.id, T0 + 800)).toBe(false)
   })
 
@@ -366,8 +381,9 @@ describe('watching the round out', () => {
     game.bet(a.id, 100, null, T0 + 10)
     const flying = T0 + 8000 + 1000
     const out = game.setWorking(a.id, false, flying)
-    expect(out?.cashed).toBeGreaterThan(0) // the open bet was cashed out at the moment it stopped
+    expect(out?.cashed).toBe(0) // nothing was cashed out for them
     expect(game.snapshot(a.id, flying)?.table.phase).toBe('running')
+    expect(game.snapshot(a.id, flying)?.you.bet?.cash).toBeNull() // the bet is still open
 
     const crashAfter = T0 + 8000 + 10_000 // the crash is at about 9.2 s into the flight
     game.touch(a, crashAfter)
@@ -383,15 +399,29 @@ describe('watching the round out', () => {
     expect(game.bet(a.id, 50, null, nextRound)).toEqual({ ok: false, error: 'locked' })
   })
 
-  test('a watcher does not count as working, cannot bet, and is not paid twice', () => {
+  test('a watcher does not count as working, cannot bet, and is paid once, by hand or by the auto target', () => {
     const { game, a } = watcher()
     game.bet(a.id, 100, 2, T0 + 10)
-    const out = game.setWorking(a.id, false, T0 + 8000 + 500) // before 2.00x: the bet is cashed out now
+    game.setWorking(a.id, false, T0 + 8000 + 500) // before 2.00x: nothing is cashed out now
+    expect(a.balance).toBe(900)
+    expect(game.bet(a.id, 50, null, T0 + 8000 + 600)).toEqual({ ok: false, error: 'locked' })
+    game.touch(a, T0 + 8000 + 6000)
+    game.tick(T0 + 8000 + 6000) // the plane passes the auto target 2.00x (crash at 3.00x), and it pays
+    expect(a.balance).toBe(900 + payoutFor(100, 2))
     const balance = a.balance
-    expect(out?.cashed).toBeGreaterThan(0)
     game.touch(a, T0 + 8000 + 10_000)
-    game.tick(T0 + 8000 + 10_000) // the auto target 2.00x is "reached" later
-    expect(a.balance).toBe(balance) // nothing more is paid
+    game.tick(T0 + 8000 + 10_000)
+    expect(a.balance).toBe(balance) // and not again
+    expect(game.cashout(a.id, T0 + 8000 + 6500).ok).toBe(false) // nothing left to cash out
+  })
+
+  test('a watcher who leaves still has the open bet settled as before', () => {
+    const { game, a } = watcher()
+    game.bet(a.id, 100, null, T0 + 10)
+    game.setWorking(a.id, false, T0 + 8000 + 4000)
+    const out = game.leave(a.id, T0 + 8000 + 4500)
+    expect(out.cashed).toBe(payoutFor(100, multiplierAt(4500, 0.12)))
+    expect(a.balance).toBe(900 + out.cashed)
   })
 
   test('if Claude is back before the round ends, the player keeps the seat', () => {
@@ -415,35 +445,25 @@ describe('watching the round out', () => {
   })
 })
 
-describe('opening the page', () => {
-  test('a link code works once, and only for a while', () => {
-    const { game } = setup()
-    const { account } = game.createAccount('ann', T0)!
-    const code = game.createLink(account.id, T0)
-    expect(game.redeemLink(code, T0 + 1000)?.account).toBe(account)
-    expect(game.redeemLink(code, T0 + 2000)).toBeNull()
-    const late = game.createLink(account.id, T0)
-    expect(game.redeemLink(late, T0 + DEFAULTS.linkMs + 1)).toBeNull()
-    expect(game.redeemLink('nonsense', T0)).toBeNull()
-    expect(game.redeemLink(42, T0)).toBeNull()
-  })
-
-  test('the browser gets a key of its own: it logs in, the mod secret is not shared, and keys are only hashes', () => {
+describe('the secret', () => {
+  test('is checked against its hash, and only the hash is kept', () => {
     const { game } = setup()
     const { account, secret } = game.createAccount('ann', T0)!
-    const redeemed = game.redeemLink(game.createLink(account.id, T0), T0)!
-    expect(redeemed.secret).not.toBe(secret)
-    expect(game.authenticate(account.id, redeemed.secret)).toBe(account)
     expect(game.authenticate(account.id, secret)).toBe(account)
-    expect(JSON.stringify(game.exportAccounts())).not.toContain(redeemed.secret)
+    expect(game.authenticate(account.id, 'wrong')).toBeNull()
+    expect(game.authenticate('nobody', secret)).toBeNull()
+    expect(game.authenticate(42, secret)).toBeNull()
+    expect(JSON.stringify(game.exportAccounts())).not.toContain(secret)
   })
 
-  test('only the last five browser keys stay valid', () => {
+  test('keys that were handed to a browser, in an accounts file from the days of the page, are dropped on load', () => {
     const { game } = setup()
-    const { account } = game.createAccount('ann', T0)!
-    const keys = Array.from({ length: 7 }, () => game.redeemLink(game.createLink(account.id, T0), T0)!.secret)
-    expect(game.authenticate(account.id, keys[0])).toBeNull()
-    expect(game.authenticate(account.id, keys[6])).toBe(account)
+    const { account, secret } = game.createAccount('ann', T0)!
+    const old = { ...account, webHashes: ['abc'] }
+    const fresh = setup().game
+    fresh.importAccounts([old])
+    expect(fresh.authenticate(account.id, secret)).not.toBeNull()
+    expect(JSON.stringify(fresh.exportAccounts())).not.toContain('webHashes')
   })
 })
 

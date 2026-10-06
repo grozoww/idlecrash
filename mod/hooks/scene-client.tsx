@@ -2,7 +2,7 @@
 // clock, so the plugin never redraws the pane (and its buttons) to move a plane.
 import type { ClientModule } from 'claude-code'
 
-import { fmt, payoutFor, seconds, times } from './shared/lib'
+import { pictureLine } from './desk'
 import { cellRow } from './pixels'
 import { drawScene, sceneInputFor } from './shared/scene'
 import type { SceneProps } from './shared/scene'
@@ -33,27 +33,12 @@ const Scene: ClientModule<SceneProps, Clock> = (props, surface) => {
   const { input, multiplier, serverNow } = sceneInputFor(props, elapsed)
   const px = drawScene(input, props.columns, props.rows * 2)
 
-  let line
-  if (props.phase === 'betting') {
-    line = (
-      <Text bold color="warning">
-        BETS OPEN  {seconds(props.bettingEndsAt - serverNow)}s
-      </Text>
-    )
-  } else if (props.phase === 'running') {
-    line = (
-      <Text bold color="success">
-        ▲ {times(multiplier)}
-        {props.stake > 0 ? `   cash out now: ${fmt(payoutFor(props.stake, multiplier))}` : ''}
-      </Text>
-    )
-  } else {
-    line = (
-      <Text bold color="error">
-        ✖ CRASHED at {times(multiplier)}
-      </Text>
-    )
-  }
+  const { text, color } = pictureLine(props, multiplier, serverNow)
+  const line = (
+    <Text bold color={color}>
+      {text}
+    </Text>
+  )
 
   const rows = []
   for (let r = 0; r < props.rows; r++) {
