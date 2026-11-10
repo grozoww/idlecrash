@@ -1,5 +1,8 @@
 # Deploy the server
 
+> The author's machine no longer runs this (since 10 November 2026), and the `deploy` workflow is turned
+> off in this repository's Actions settings. Everything below still works for a machine of your own.
+
 A small Ubuntu 24.04 machine is enough (2 vCPU, 2 GB RAM). Caddy answers on 80 and 443 and gets the
 HTTPS certificate by itself. The game server listens on `127.0.0.1:8787` only, behind Caddy.
 
