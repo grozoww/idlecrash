@@ -2,6 +2,10 @@
 
 Bet fake tokens in a Crash game with other people who are also waiting for Claude.
 
+> **The public server is shut down** (10 November 2026). Nothing is deployed any more, so a freshly
+> installed mod has no game to connect to. To play, [run your own server](#run-a-server) and point the mod
+> at it with `serverUrl`.
+
 You send Claude a task. A pixel-art 1960s prop plane takes off. Everyone at your table bets before
 take-off and cashes out before the plane crashes. When Claude finishes, betting locks and you are
 back to work.
@@ -66,15 +70,17 @@ Commands in Claude Code:
 
 ## The server
 
-The mod plays on a server run by the author, at `https://178-105-28-170.sslip.io`. It is a small machine
-and has no promise of uptime. When it is down the mod does nothing and the pane says it cannot reach it. The
-address is the `serverUrl` setting:
+There is no public server any more. The author's one, at `https://178-105-28-170.sslip.io`, was shut down
+on 10 November 2026, and that address now belongs to something else. It is still the default `serverUrl`
+in the mod, so a mod left on the default cannot play.
+
+To play, [run a server](#run-a-server) and give the mod its address:
 
 ```bash
 claude plugin install idlecrash@grozoww-mods --config serverUrl=https://your-server.example
 ```
 
-or later in `/config`. You can run your own: see [Run a server](#run-a-server).
+or later in `/config`.
 
 ## What the server sees
 
